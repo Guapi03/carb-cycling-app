@@ -1,13 +1,429 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>carb-cycling-app</title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.js"></script>
-  </body>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>瓜皮智营养云端日志 | Guapi NutriCloud App</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+
+<!-- Header -->
+<header class="app-header">
+  <div class="max-w-4xl mx-auto px-4 py-3 flex justify-between items-center">
+    <div class="flex items-center space-x-2">
+      <i class="fa-solid fa-arrows-spin text-2xl text-amber-300"></i>
+      <div>
+        <h1 class="text-lg font-bold leading-tight" data-i18n="app_title">瓜皮智营养云端日志</h1>
+        <p class="text-[11px] text-indigo-200" id="current-time-display">24h 时钟加载中...</p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <button id="btn-open-profile" class="hidden bg-indigo-700 hover:bg-indigo-800 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition items-center gap-1.5 border border-indigo-400">
+        <i class="fa-solid fa-circle-user text-amber-300 text-sm"></i>
+        <span id="user-email-text" class="max-w-[120px] sm:max-w-[160px] truncate">账号设置</span>
+      </button>
+
+      <button id="btn-logout" title="退出登录" class="hidden bg-indigo-700/60 hover:bg-rose-600 text-white p-1.5 rounded-lg text-xs transition border border-indigo-500">
+        <i class="fa-solid fa-right-from-bracket"></i>
+      </button>
+
+      <button id="lang-btn" class="bg-indigo-500 hover:bg-indigo-400 text-white px-2.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1">
+        <i class="fa-solid fa-globe"></i>
+        <span id="lang-text">English</span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- Login/Register Modal -->
+<div id="auth-modal" class="modal-overlay z-50">
+  <div class="modal-content max-w-md">
+    <div class="text-center mb-6">
+      <div class="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-2 text-xl font-bold">
+        <i class="fa-solid fa-cloud-arrow-up"></i>
+      </div>
+      <h2 class="text-xl font-bold text-slate-800" id="auth-modal-title" data-i18n="auth_login_title">登录你的健身云端账号</h2>
+      <p class="text-xs text-slate-500 mt-1" data-i18n="auth_subtitle">云端保存每日数据，智能匹配体质饮食策略</p>
+    </div>
+
+    <form id="auth-form" class="space-y-4">
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1" data-i18n="lbl_email">电子邮箱 Email</label>
+        <input type="email" id="auth-email" required placeholder="your@email.com" class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-slate-600 mb-1" data-i18n="lbl_password">密码 Password</label>
+        <input type="password" id="auth-password" required minlength="6" placeholder="******" class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+      </div>
+
+      <div id="auth-msg" class="text-xs text-center font-medium hidden"></div>
+
+      <button type="submit" id="auth-submit-btn" class="w-full btn-primary" data-i18n="btn_login">
+        登录 / Login
+      </button>
+    </form>
+
+    <div class="mt-4 text-center text-xs text-slate-500">
+      <span id="auth-switch-prompt" data-i18n="auth_no_account">还没有账号？</span>
+      <button type="button" id="btn-toggle-auth" class="text-indigo-600 font-bold hover:underline ml-1" data-i18n="btn_go_register">去注册新账号</button>
+    </div>
+  </div>
+</div>
+
+<!-- User Profile Modal -->
+<div id="profile-modal" class="modal-overlay hidden z-50">
+  <div class="modal-content max-w-md">
+    <div class="flex justify-between items-center mb-4 border-b pb-3">
+      <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
+        <i class="fa-solid fa-user-gear text-indigo-600"></i>
+        <span data-i18n="profile_title">个人设置与智能体质分析</span>
+      </h3>
+      <button id="btn-close-profile" class="text-slate-400 hover:text-slate-600 text-lg">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <form id="profile-form" class="space-y-4">
+      <div class="grid grid-cols-3 gap-3">
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1" data-i18n="lbl_weight">体重 (kg)</label>
+          <input type="number" id="input-weight" value="74" step="0.5" class="w-full bg-slate-50 border rounded-lg px-3 py-2 text-sm font-bold text-indigo-600 focus:ring-2 focus:ring-indigo-500 outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1" data-i18n="lbl_height">身高 (cm)</label>
+          <input type="number" id="input-height" value="175" class="w-full bg-slate-50 border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1" data-i18n="lbl_age">年龄</label>
+          <input type="number" id="input-age" value="23" class="w-full bg-slate-50 border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+        </div>
+      </div>
+
+      <div id="bmi-recommend-card" class="bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-xs text-amber-800 font-medium">
+        <div class="flex justify-between items-center mb-1">
+          <span class="font-bold">BMI: <span id="bmi-value-text">24.2</span></span>
+          <span id="bmi-status-badge" class="bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full text-[10px] font-bold">标准体型</span>
+        </div>
+        <p id="bmi-recommend-text" class="text-[11px] leading-tight">💡 智能推荐：碳水循环饮食（BMI ≥ 18.5 减脂塑形）</p>
+      </div>
+
+      <div>
+        <label class="block text-xs font-bold text-slate-700 mb-2" data-i18n="lbl_diet_plan">选择饮食模式</label>
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <label id="label-plan-carb" class="border-2 border-indigo-500 bg-indigo-50/50 p-2.5 rounded-xl cursor-pointer transition flex flex-col justify-between">
+            <input type="radio" name="diet_plan" value="carb_cycling" checked class="hidden">
+            <span class="font-bold text-indigo-900">碳水循环 Diet</span>
+            <span class="text-[10px] text-slate-500 mt-1">3低1高 24H 判碳<br>适合减脂塑形</span>
+          </label>
+
+          <label id="label-plan-ecto" class="border-2 border-slate-200 bg-slate-50 p-2.5 rounded-xl cursor-pointer transition flex flex-col justify-between">
+            <input type="radio" name="diet_plan" value="ectomorph" class="hidden">
+            <span class="font-bold text-slate-700">外胚型 Diet</span>
+            <span class="text-[10px] text-slate-500 mt-1">高热量/稳定偏高碳水<br>适合吃不胖偏瘦增肌</span>
+          </label>
+        </div>
+      </div>
+
+      <div id="start-date-section" class="bg-indigo-50/60 p-3 rounded-xl border border-indigo-100">
+        <div class="flex justify-between items-center mb-1">
+          <label class="block text-xs font-bold text-indigo-900" data-i18n="lbl_start_date">第一天(低碳日)起始日期：</label>
+          <button type="button" id="btn-set-today" class="text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-0.5 rounded font-medium transition" data-i18n="btn_set_today">
+            设为今天
+          </button>
+        </div>
+        <input type="date" id="cycle-start-date" class="w-full bg-white border border-indigo-200 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none">
+        <p class="text-[10px] text-indigo-600/80 mt-1" data-i18n="start_date_hint">系统以此日期计算 3低1高 循环（仅在碳水循环模式下生效）。</p>
+      </div>
+
+      <div class="pt-1 flex justify-end gap-2">
+        <button type="button" id="btn-cancel-profile" class="px-4 py-2 bg-slate-100 text-slate-600 hover:bg-slate-200 rounded-lg text-xs font-semibold transition" data-i18n="btn_cancel">取消</button>
+        <button type="submit" class="px-5 py-2 btn-primary text-xs" data-i18n="btn_save">保存更改</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Main Content App -->
+<main class="max-w-4xl mx-auto px-4 mt-5 space-y-5">
+
+  <!-- 1. 24H Cycle Banner -->
+  <section id="cycle-banner" class="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl shadow-md p-4 text-white relative overflow-hidden transition-all">
+    <div class="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="bg-white/20 text-xs px-2.5 py-0.5 rounded-full font-medium backdrop-blur-sm" id="today-date-text">今天: --</span>
+          <span id="banner-mode-tag" class="bg-amber-400 text-slate-900 text-xs px-2.5 py-0.5 rounded-full font-bold shadow-sm" data-i18n="tag_auto">24H 智能判碳 (UTC+8)</span>
+        </div>
+        <h2 class="text-xl font-black tracking-wide" id="cycle-day-title">计算中...</h2>
+        <p class="text-xs text-indigo-100 mt-0.5 leading-snug" id="cycle-strategy-desc">策略加载中...</p>
+      </div>
+
+      <button id="btn-edit-profile-shortcut" class="bg-white/15 hover:bg-white/25 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/20 text-xs text-white font-medium transition flex items-center gap-1.5 shrink-0">
+        <i class="fa-solid fa-pen-to-square"></i>
+        <span data-i18n="btn_adjust_profile">修改参数/模式</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- 2. 今日摄入概览卡片 -->
+  <section class="card-panel">
+    <div class="text-xs font-bold text-slate-400 mb-4 flex items-center gap-1">
+      <i class="fa-solid fa-chart-pie text-indigo-500"></i>
+      <span data-i18n="title_custom_diet">自定义饮食摄入概览</span>
+    </div>
+
+    <div class="grid grid-cols-3 items-center text-center py-2 border-b border-slate-100 pb-6">
+      <div>
+        <p class="text-xs text-slate-400 mb-1" data-i18n="lbl_diet_intake">饮食摄入</p>
+        <p class="text-2xl font-black text-slate-800" id="stat-intake-kcal">0</p>
+        <p class="text-[10px] text-slate-400">千卡 kcal</p>
+      </div>
+
+      <div class="flex flex-col items-center">
+        <div class="stat-circle">
+          <span class="text-[11px] text-slate-500 font-medium" data-i18n="lbl_remaining_kcal">还可以吃 (千卡)</span>
+          <span class="text-3xl font-black text-indigo-600 my-0.5" id="stat-remaining-kcal">0</span>
+          <span class="text-[10px] text-slate-400" id="stat-target-kcal">目标 0 kcal</span>
+        </div>
+      </div>
+
+      <div>
+        <p class="text-xs text-slate-400 mb-1" data-i18n="lbl_cycle_mode_stat">饮食模式</p>
+        <p class="text-base font-black text-indigo-600" id="stat-cycle-mode-text">低碳日</p>
+        <p class="text-[10px] text-slate-400" id="stat-cycle-day-sub">第 1 天</p>
+      </div>
+    </div>
+
+    <!-- 三大营养素进度条 -->
+    <div class="grid grid-cols-3 gap-4 mt-5 text-center text-xs">
+      <div>
+        <p class="font-bold text-slate-700 mb-1" data-i18n="c_title">碳水化合物</p>
+        <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden mb-1">
+          <div id="bar-c" class="bg-emerald-500 h-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+        <p class="text-slate-500 font-semibold" id="ratio-c">0 / 0 克</p>
+      </div>
+
+      <div>
+        <p class="font-bold text-slate-700 mb-1" data-i18n="p_title">蛋白质</p>
+        <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden mb-1">
+          <div id="bar-p" class="bg-rose-500 h-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+        <p class="text-slate-500 font-semibold" id="ratio-p">0 / 0 克</p>
+      </div>
+
+      <div>
+        <p class="font-bold text-slate-700 mb-1" data-i18n="f_title">脂肪</p>
+        <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden mb-1">
+          <div id="bar-f" class="bg-sky-500 h-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+        <p class="text-slate-500 font-semibold" id="ratio-f">0 / 0 克</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. 薄荷健康风格：今日已吃记录 -->
+  <section class="space-y-4">
+    <div class="flex justify-between items-center px-1">
+      <h3 class="text-base font-extrabold text-slate-800 flex items-center gap-2">
+        <i class="fa-solid fa-utensils text-indigo-600"></i>
+        <span data-i18n="title_food_log">今日已吃记录</span>
+      </h3>
+      <button id="btn-clear-today" class="text-xs text-rose-500 hover:text-rose-700 font-medium transition flex items-center gap-1">
+        <i class="fa-solid fa-trash-can"></i>
+        <span data-i18n="btn_clear">清空今日</span>
+      </button>
+    </div>
+
+    <!-- 动态渲染各餐次卡片列表 (早餐 / 午餐 / 晚餐 / 加餐) -->
+    <div id="meal-sections-container" class="space-y-4">
+    </div>
+  </section>
+
+</main>
+
+<!-- 底部固定餐次选择栏 -->
+<div class="bottom-nav">
+  <div class="bottom-nav-inner">
+    <button onclick="openFoodSelectModal('breakfast')" class="bottom-nav-btn">
+      <span class="text-2xl">🍳</span>
+      <span class="text-xs font-bold mt-1" data-i18n="meal_bf">+早餐</span>
+    </button>
+
+    <button onclick="openFoodSelectModal('lunch')" class="bottom-nav-btn">
+      <span class="text-2xl">🍔</span>
+      <span class="text-xs font-bold mt-1" data-i18n="meal_lunch">+午餐</span>
+    </button>
+
+    <button onclick="openFoodSelectModal('dinner')" class="bottom-nav-btn">
+      <span class="text-2xl">🍲</span>
+      <span class="text-xs font-bold mt-1" data-i18n="meal_dinner">+晚餐</span>
+    </button>
+
+    <button onclick="openFoodSelectModal('snack')" class="bottom-nav-btn">
+      <span class="text-2xl">🍎</span>
+      <span class="text-xs font-bold mt-1" data-i18n="meal_snack">+加餐</span>
+    </button>
+  </div>
+</div>
+
+<!-- 食材选择弹窗 -->
+<div id="food-select-modal" class="modal-overlay hidden flex-col justify-end sm:justify-center p-0 sm:p-4">
+  <div class="bg-white rounded-t-3xl sm:rounded-2xl max-w-lg w-full mx-auto flex flex-col shadow-2xl overflow-hidden">
+    <!-- Modal Header -->
+    <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+      <div>
+        <h3 class="font-bold text-base text-slate-800" id="modal-meal-title">添加 早餐</h3>
+        <p class="text-[11px] text-slate-400" data-i18n="hint_select_food">选择常见食材或搜索公共共享库</p>
+      </div>
+      <button id="btn-close-food-modal" class="text-slate-400 hover:text-slate-600 text-lg p-1">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <!-- 搜索栏与自定义按钮 -->
+    <div class="p-3 bg-slate-50/80 border-b border-slate-100 flex gap-2">
+      <div class="relative flex-1">
+        <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-400 text-xs"></i>
+        <input type="text" id="food-search-input" placeholder="搜索食材名称..." class="w-full bg-white border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs focus:ring-2 focus:ring-indigo-500 outline-none">
+      </div>
+      <button id="btn-open-custom-food" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold px-3 py-1.5 rounded-xl text-xs transition border border-indigo-200 flex items-center gap-1 shrink-0">
+        <i class="fa-solid fa-plus text-xs"></i>
+        <span data-i18n="btn_custom_food">自定义</span>
+      </button>
+    </div>
+
+    <!-- 食材分类 Tab 栏 -->
+    <div class="bg-slate-100/70 p-1 flex justify-around text-xs border-b border-slate-100">
+      <button id="tab-btn-all" onclick="switchFoodTab('all')" class="food-tab-btn active" data-i18n="tab_all">全部食材</button>
+      <button id="tab-btn-fav" onclick="switchFoodTab('fav')" class="food-tab-btn" data-i18n="tab_fav">⭐ 常用收藏</button>
+      <button id="tab-btn-recent" onclick="switchFoodTab('recent')" class="food-tab-btn" data-i18n="tab_recent">🕒 最近吃过</button>
+    </div>
+
+    <!-- Food List 固定空间范围 (右侧滚动条已隐藏) -->
+    <div class="food-list-scroll divide-y divide-slate-100" id="food-preset-list">
+      <!-- 动态渲染食物列表 -->
+    </div>
+  </div>
+</div>
+
+<!-- 弹窗 2：新增自定义食物通用弹窗 -->
+<div id="custom-food-modal" class="modal-overlay hidden z-50">
+  <div class="modal-content max-w-sm">
+    <div class="flex justify-between items-center mb-4 border-b pb-2">
+      <h3 class="font-bold text-base text-slate-800" data-i18n="title_add_custom_food">添加通用自定义食材</h3>
+      <button id="btn-close-custom-modal" class="text-slate-400 hover:text-slate-600">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <form id="custom-food-form" class="space-y-3 text-xs">
+      <div>
+        <label class="block font-semibold text-slate-600 mb-1">食材名称 (中文/英文)</label>
+        <input type="text" id="custom-name-input" required placeholder="例如：黑米饭 /全麦面包" class="w-full border rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500 outline-none">
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="block font-semibold text-slate-600 mb-1">图标 Emoji</label>
+          <input type="text" id="custom-icon-input" value="🥗" class="w-full text-center border rounded-lg px-3 py-1.5 text-sm">
+        </div>
+        <div>
+          <label class="block font-semibold text-slate-600 mb-1">热量 (kcal / 100g)</label>
+          <input type="number" id="custom-kcal-input" required placeholder="120" class="w-full border rounded-lg px-3 py-1.5 text-xs">
+        </div>
+      </div>
+
+      <div class="grid grid-cols-3 gap-2">
+        <div>
+          <label class="block font-semibold text-slate-600 mb-1">碳水 (g/100g)</label>
+          <input type="number" id="custom-c-input" step="0.1" required placeholder="20" class="w-full border rounded-lg px-2 py-1.5 text-xs">
+        </div>
+        <div>
+          <label class="block font-semibold text-slate-600 mb-1">蛋白 (g/100g)</label>
+          <input type="number" id="custom-p-input" step="0.1" required placeholder="15" class="w-full border rounded-lg px-2 py-1.5 text-xs">
+        </div>
+        <div>
+          <label class="block font-semibold text-slate-600 mb-1">脂肪 (g/100g)</label>
+          <input type="number" id="custom-f-input" step="0.1" required placeholder="2" class="w-full border rounded-lg px-2 py-1.5 text-xs">
+        </div>
+      </div>
+
+      <button type="submit" class="w-full btn-primary py-2.5 mt-2 text-xs">
+        上传至共享库并选择
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- 弹窗 3：克数输入与热量计算弹窗 -->
+<div id="portion-input-modal" class="modal-overlay hidden z-50">
+  <div class="modal-content max-w-sm">
+    <button id="btn-close-portion-modal" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-lg">
+      <i class="fa-solid fa-xmark"></i>
+    </button>
+
+    <div class="text-center mb-5">
+      <span class="text-4xl" id="portion-food-icon">🍗</span>
+      <h4 class="font-bold text-lg text-slate-800 mt-2" id="portion-food-name">鸡胸肉</h4>
+      <div class="bg-indigo-50/60 p-3 rounded-xl mt-3 flex justify-around text-xs border border-indigo-100">
+        <div>
+          <p class="text-slate-400" data-i18n="cal_title">热量</p>
+          <p class="font-black text-indigo-600 text-base" id="portion-calc-kcal">0 kcal</p>
+        </div>
+        <div>
+          <p class="text-slate-400" data-i18n="c_title">碳水</p>
+          <p class="font-bold text-slate-700" id="portion-calc-c">0g</p>
+        </div>
+        <div>
+          <p class="text-slate-400" data-i18n="p_title">蛋白</p>
+          <p class="font-bold text-slate-700" id="portion-calc-p">0g</p>
+        </div>
+        <div>
+          <p class="text-slate-400" data-i18n="f_title">脂肪</p>
+          <p class="font-bold text-slate-700" id="portion-calc-f">0g</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="space-y-4">
+      <div>
+        <label class="block text-xs font-bold text-slate-600 mb-2 text-center" data-i18n="lbl_input_grams">食用重量 (克 / g)</label>
+        <div class="flex items-center justify-center gap-3">
+          <button type="button" id="btn-step-minus" class="stepper-btn">
+            <i class="fa-solid fa-minus"></i>
+          </button>
+
+          <div class="relative w-36">
+            <input type="number" id="portion-grams-input" value="100" min="1" step="5" class="w-full text-center text-2xl font-black text-indigo-600 border-2 border-indigo-500 rounded-xl py-2 pl-2 pr-8 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+            <span class="absolute right-3 top-3.5 text-xs text-slate-400 font-bold pointer-events-none">g</span>
+          </div>
+
+          <button type="button" id="btn-step-plus" class="stepper-btn">
+            <i class="fa-solid fa-plus"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="flex justify-center gap-2">
+        <button type="button" onclick="setQuickGrams(50)" class="bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600">50g</button>
+        <button type="button" onclick="setQuickGrams(100)" class="bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600">100g</button>
+        <button type="button" onclick="setQuickGrams(150)" class="bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600">150g</button>
+        <button type="button" onclick="setQuickGrams(200)" class="bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-600">200g</button>
+      </div>
+
+      <button id="btn-confirm-save-portion" class="w-full btn-primary py-3 text-sm flex items-center justify-center gap-1.5 mt-4">
+        <i class="fa-solid fa-check"></i>
+        <span data-i18n="btn_save_entry">保存记录并返回主页</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
 </html>
