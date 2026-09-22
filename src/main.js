@@ -1,135 +1,224 @@
+// src/main.js
 import { supabase } from './lib/supabase.js'
 import { i18n } from './i18n.js'
-import { getTodayStrUTC8, calculateBMI, computeCycleState, calculateMacroTargets } from './calc.js'
 import {
-    dbFetchFoodsAndFavorites, dbToggleFavorite, dbLoadProfileAndLogs,
-    dbSaveProfile, dbInsertFoodEntry, dbDeleteFoodEntry, dbClearTodayLogs, dbInsertCustomFood
+    dbFetchFoodsAndFavorites,
+    dbToggleFavorite,
+    dbLoadProfileAndLogs,
+    dbSaveProfile,
+    dbInsertFoodEntry,
+    dbDeleteFoodEntry,
+    dbClearTodayLogs,
+    dbInsertCustomFood,
+    dbSyncDailyLog
 } from './db.js'
 
-// 全局响应式数据与状态
-let allFoodsList = [];
-let userFavoriteIds = new Set();
-let currentFoodTab = 'all';
+import { calculateBMI, computeCycleState, calculateMacroTargets, getTodayStrUTC8 } from './calc.js'
+import { startClock, toggleModal, updateDietPlanCardsUI, handleImageUrlInput, handleImageFileSelect } from './ui.js'
 
 let currentLang = 'zh';
 let currentUser = null;
 let isRegisterMode = false;
+let activeMealCategory = 'breakfast';
+let activeFoodTab = 'all';
 
-let userProfile = { weight: 74, height: 175, age: 23, diet_plan: 'carb_cycling', cycle_start_date: getTodayStrUTC8() };
+let currentViewDate = getTodayStrUTC8();
+let userProfile = { weight: 74, height: 175, age: 23, cycle_start_date: getTodayStrUTC8(), diet_plan: 'carb_cycling' };
 let foodEntries = [];
-let targets = { p: 0, c: 0, f: 0, cal: 0 };
-let currentCycleState = { dayNumber: 1, isHighCarb: false };
+let dbFoods = [];
+let favIds = new Set();
 
-let activeMealType = 'breakfast';
 let activeSelectedFood = null;
+let customImageBase64 = '';
 
+let fpViewDateInstance = null;
+let fpStartDateInstance = null;
+
+function setCustomImageBase64(val) {
+    customImageBase64 = val;
+}
+
+// --- App Initialization ---
 document.addEventListener('DOMContentLoaded', () => {
     initApp();
     bindEvents();
-
-    // 挂载全局方法供 HTML 内联触发
-    window.openFoodSelectModal = openFoodSelectModal;
-    window.selectFoodItemToPortionModal = selectFoodItemToPortionModal;
-    window.setQuickGrams = setQuickGrams;
-    window.switchFoodTab = switchFoodTab;
-    window.toggleFavoriteFood = toggleFavoriteFood;
+    initFlatpickers();
 });
 
 function initApp() {
-    startClockUTC8();
+    startClock(() => currentLang);
 
-    supabase.auth.onAuthStateChange(async (event, session) => {
+    supabase.auth.onAuthStateChange((event, session) => {
         if (session && session.user) {
             currentUser = session.user;
-            document.getElementById('auth-modal').classList.add('hidden');
-            document.getElementById('btn-open-profile').classList.remove('hidden');
-            document.getElementById('btn-open-profile').classList.add('flex');
-            document.getElementById('btn-logout').classList.remove('hidden');
-            document.getElementById('user-email-text').innerText = currentUser.email;
+            toggleModal('auth-modal', false);
 
-            await loadAppData();
+            const profileBtn = document.getElementById('btn-open-profile');
+            if (profileBtn) {
+                profileBtn.classList.remove('hidden');
+                profileBtn.classList.add('flex');
+            }
+
+            const logoutBtn = document.getElementById('btn-logout');
+            if (logoutBtn) logoutBtn.classList.remove('hidden');
+
+            document.getElementById('user-email-text').innerText = currentUser.email;
+            loadProfileAndLogs();
         } else {
             currentUser = null;
             document.getElementById('btn-open-profile').classList.add('hidden');
             document.getElementById('btn-logout').classList.add('hidden');
-            document.getElementById('auth-modal').classList.remove('hidden');
+            toggleModal('auth-modal', true);
         }
     });
 }
 
-async function loadAppData() {
-    if (!currentUser) return;
-    const todayStr = getTodayStrUTC8();
+function initFlatpickers() {
+    if (typeof flatpickr === 'undefined') return;
 
-    const { profile, entries } = await dbLoadProfileAndLogs(currentUser.id, todayStr);
-    if (profile) userProfile = profile;
-    foodEntries = entries;
+    fpViewDateInstance = flatpickr("#btn-date-trigger", {
+        locale: currentLang === 'zh' ? 'zh' : 'default',
+        dateFormat: "Y-m-d",
+        defaultDate: currentViewDate,
+        disableMobile: true,
+        onChange: function(selectedDates, dateStr) {
+            setViewDate(dateStr);
+        }
+    });
 
-    const { foods, favIds } = await dbFetchFoodsAndFavorites(currentUser.id);
-    allFoodsList = foods;
-    userFavoriteIds = favIds;
-
-    recalculateAndRender();
+    fpStartDateInstance = flatpickr("#cycle-start-date", {
+        locale: currentLang === 'zh' ? 'zh' : 'default',
+        dateFormat: "Y-m-d",
+        defaultDate: userProfile.cycle_start_date || getTodayStrUTC8(),
+        disableMobile: true
+    });
 }
 
 function bindEvents() {
-    document.getElementById('lang-btn').addEventListener('click', toggleLanguage);
     document.getElementById('auth-form').addEventListener('submit', handleAuthSubmit);
     document.getElementById('btn-toggle-auth').addEventListener('click', toggleAuthMode);
     document.getElementById('btn-logout').addEventListener('click', () => supabase.auth.signOut());
 
+    document.getElementById('btn-prev-day')?.addEventListener('click', () => changeViewDate(-1));
+    document.getElementById('btn-next-day')?.addEventListener('click', () => changeViewDate(1));
+    document.getElementById('btn-today-shortcut')?.addEventListener('click', () => setViewDate(getTodayStrUTC8()));
+
+    document.getElementById('lang-btn').addEventListener('click', toggleLanguage);
     document.getElementById('btn-open-profile').addEventListener('click', openProfileModal);
     document.getElementById('btn-edit-profile-shortcut').addEventListener('click', openProfileModal);
     document.getElementById('btn-close-profile').addEventListener('click', closeProfileModal);
     document.getElementById('btn-cancel-profile').addEventListener('click', closeProfileModal);
-    document.getElementById('profile-form').addEventListener('submit', handleProfileSave);
-    document.getElementById('btn-set-today').addEventListener('click', () => {
-        document.getElementById('cycle-start-date').value = getTodayStrUTC8();
-    });
+    document.getElementById('profile-form').addEventListener('submit', handleProfileSubmit);
 
-    document.getElementById('input-weight').addEventListener('input', updateBmiCalculation);
-    document.getElementById('input-height').addEventListener('input', updateBmiCalculation);
+    document.getElementById('btn-set-today').addEventListener('click', () => {
+        const today = getTodayStrUTC8();
+        if (fpStartDateInstance) {
+            fpStartDateInstance.setDate(today);
+        } else {
+            document.getElementById('cycle-start-date').value = today;
+        }
+    });
 
     document.querySelectorAll('input[name="diet_plan"]').forEach(radio => {
-        radio.addEventListener('change', updateDietPlanCardUI);
+        radio.addEventListener('change', (e) => updateDietPlanCardsUI(e.target.value));
     });
 
-    document.getElementById('btn-close-food-modal').addEventListener('click', closeFoodSelectModal);
-    document.getElementById('btn-close-portion-modal').addEventListener('click', closePortionModal);
-    document.getElementById('food-search-input').addEventListener('input', renderPresetFoodList);
+    document.getElementById('tab-btn-all').addEventListener('click', () => switchFoodTab('all'));
+    document.getElementById('tab-btn-fav').addEventListener('click', () => switchFoodTab('fav'));
+    document.getElementById('tab-btn-recent').addEventListener('click', () => switchFoodTab('recent'));
 
-    document.getElementById('btn-step-minus').addEventListener('click', () => adjustGrams(-10));
-    document.getElementById('btn-step-plus').addEventListener('click', () => adjustGrams(10));
-    document.getElementById('portion-grams-input').addEventListener('input', updatePortionCalculations);
+    document.getElementById('btn-close-food-modal').addEventListener('click', closeFoodSelectModal);
+    document.getElementById('food-search-input').addEventListener('input', renderPresetFoodList);
 
     document.getElementById('btn-open-custom-food').addEventListener('click', openCustomFoodModal);
     document.getElementById('btn-close-custom-modal').addEventListener('click', closeCustomFoodModal);
     document.getElementById('custom-food-form').addEventListener('submit', handleCustomFoodSubmit);
 
-    document.getElementById('btn-confirm-save-portion').addEventListener('click', saveFoodPortionEntry);
+    document.getElementById('custom-img-url-input').addEventListener('input', (e) => handleImageUrlInput(e, setCustomImageBase64));
+    document.getElementById('custom-img-file-input').addEventListener('change', (e) => handleImageFileSelect(e, setCustomImageBase64));
+
+    document.getElementById('btn-close-portion-modal').addEventListener('click', closePortionModal);
+    document.getElementById('portion-grams-input').addEventListener('input', updatePortionCalculations);
+    document.getElementById('btn-step-minus').addEventListener('click', () => adjustGrams(-10));
+    document.getElementById('btn-step-plus').addEventListener('click', () => adjustGrams(10));
+    document.getElementById('btn-confirm-save-portion').addEventListener('click', savePortionToLog);
+
     document.getElementById('btn-clear-today').addEventListener('click', clearTodayLog);
 }
 
-function toggleLanguage() {
-    currentLang = currentLang === 'zh' ? 'en' : 'zh';
-    document.getElementById('lang-text').innerText = currentLang === 'zh' ? 'English' : '中文';
+// 转换星期几字符串（适配中英文）
+function getWeekdayName(dateStr, lang) {
+    const zhDays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+    const enDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const d = new Date(dateStr);
+    const dayIdx = d.getDay();
+    return lang === 'zh' ? (zhDays[dayIdx] || '') : (enDays[dayIdx] || '');
+}
 
-    document.querySelectorAll('[data-i18n]').forEach(el => {
-        const key = el.getAttribute('data-i18n');
-        if (i18n[currentLang][key]) {
-            el.innerText = i18n[currentLang][key];
+function changeViewDate(offsetDays) {
+    const d = new Date(currentViewDate);
+    d.setDate(d.getDate() + offsetDays);
+    setViewDate(d.toISOString().split('T')[0]);
+}
+
+async function setViewDate(dateStr) {
+    if (!dateStr) return;
+    currentViewDate = dateStr;
+
+    if (fpViewDateInstance) {
+        fpViewDateInstance.setDate(currentViewDate, false);
+    }
+
+    const displayEl = document.getElementById('view-date-display');
+    if (displayEl) {
+        displayEl.innerText = `${currentViewDate} (${getWeekdayName(currentViewDate, currentLang)})`;
+    }
+
+    const todayStr = getTodayStrUTC8();
+    const shortcutBtn = document.getElementById('btn-today-shortcut');
+    const badge = document.getElementById('date-status-badge');
+    const t = i18n[currentLang];
+
+    if (shortcutBtn) {
+        if (currentViewDate === todayStr) {
+            shortcutBtn.classList.add('hidden');
+            if (badge) badge.innerText = t.today_record;
+        } else {
+            shortcutBtn.classList.remove('hidden');
+            if (badge) badge.innerText = `${currentLang === 'zh' ? '补记' : 'Log'}: ${currentViewDate}`;
         }
-    });
+    }
+
+    if (currentUser) {
+        const { profile, entries } = await dbLoadProfileAndLogs(currentUser.id, currentViewDate);
+        if (profile) userProfile = profile;
+        foodEntries = entries;
+    }
 
     recalculateAndRender();
 }
 
+function switchFoodTab(tab) {
+    activeFoodTab = tab;
+    const tabs = { 'all': 'tab-btn-all', 'fav': 'tab-btn-fav', 'recent': 'tab-btn-recent' };
+
+    Object.keys(tabs).forEach(t => {
+        const btn = document.getElementById(tabs[t]);
+        if (btn) {
+            btn.className = (t === tab) ? "food-tab-btn active" : "food-tab-btn";
+        }
+    });
+
+    renderPresetFoodList();
+}
+
 function toggleAuthMode() {
     isRegisterMode = !isRegisterMode;
-    document.getElementById('auth-modal-title').innerText = isRegisterMode ? i18n[currentLang].btn_go_register : i18n[currentLang].auth_login_title;
-    document.getElementById('auth-submit-btn').innerText = isRegisterMode ? i18n[currentLang].btn_go_register : i18n[currentLang].auth_login_title;
-    document.getElementById('auth-switch-prompt').innerText = isRegisterMode ? '已有账号？' : i18n[currentLang].auth_no_account;
-    document.getElementById('btn-toggle-auth').innerText = isRegisterMode ? '去登录' : i18n[currentLang].btn_go_register;
+    const t = i18n[currentLang];
+    document.getElementById('auth-modal-title').innerText = isRegisterMode ? t.auth_register_title : t.auth_login_title;
+    document.getElementById('auth-submit-btn').innerText = isRegisterMode ? t.btn_go_register : t.btn_login;
+    document.getElementById('btn-toggle-auth').innerText = isRegisterMode ? t.btn_login : t.btn_go_register;
+    document.getElementById('auth-switch-prompt').innerText = isRegisterMode ? t.auth_prompt_has_account : t.auth_prompt_no_account;
 }
 
 async function handleAuthSubmit(e) {
@@ -148,7 +237,7 @@ async function handleAuthSubmit(e) {
             msgEl.innerText = error.message;
         } else {
             msgEl.className = "text-xs text-center font-medium block text-emerald-600";
-            msgEl.innerText = "Verification email sent!";
+            msgEl.innerText = "Verification email sent.";
         }
     } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -159,73 +248,25 @@ async function handleAuthSubmit(e) {
     }
 }
 
-function updateBmiCalculation() {
-    const w = parseFloat(document.getElementById('input-weight').value) || 74;
-    const h = parseFloat(document.getElementById('input-height').value) || 175;
+async function loadProfileAndLogs() {
+    if (!currentUser) return;
 
-    const bmi = calculateBMI(w, h);
-    document.getElementById('bmi-value-text').innerText = bmi;
+    const { foods, favIds: fetchedFavs } = await dbFetchFoodsAndFavorites(currentUser.id);
+    dbFoods = foods;
+    favIds = fetchedFavs;
 
-    const badgeEl = document.getElementById('bmi-status-badge');
-    const recommendTextEl = document.getElementById('bmi-recommend-text');
+    const { profile, entries } = await dbLoadProfileAndLogs(currentUser.id, currentViewDate);
+    if (profile) userProfile = profile;
+    foodEntries = entries;
 
-    if (bmi < 18.5) {
-        badgeEl.innerText = currentLang === 'zh' ? '偏瘦体型 / 吸受较差' : 'Underweight / Ectomorph';
-        badgeEl.className = "bg-rose-100 text-rose-800 px-2 py-0.5 rounded-full text-[10px] font-bold";
-        recommendTextEl.innerText = i18n[currentLang].bmi_recommend_ectomorph;
-    } else if (bmi >= 24.0) {
-        badgeEl.innerText = currentLang === 'zh' ? '偏重体型 / 建议减脂' : 'Overweight';
-        badgeEl.className = "bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full text-[10px] font-bold";
-        recommendTextEl.innerText = i18n[currentLang].bmi_recommend_carb_cycling;
-    } else {
-        badgeEl.innerText = currentLang === 'zh' ? '标准体型' : 'Normal Weight';
-        badgeEl.className = "bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full text-[10px] font-bold";
-        recommendTextEl.innerText = i18n[currentLang].bmi_recommend_carb_cycling;
+    if (fpStartDateInstance && userProfile.cycle_start_date) {
+        fpStartDateInstance.setDate(userProfile.cycle_start_date);
     }
+
+    recalculateAndRender();
 }
 
-function updateDietPlanCardUI() {
-    const selectedPlan = document.querySelector('input[name="diet_plan"]:checked')?.value || 'carb_cycling';
-    const labelCarb = document.getElementById('label-plan-carb');
-    const labelEcto = document.getElementById('label-plan-ecto');
-    const startDateSection = document.getElementById('start-date-section');
-
-    if (selectedPlan === 'carb_cycling') {
-        labelCarb.className = "border-2 border-indigo-500 bg-indigo-50/50 p-2.5 rounded-xl cursor-pointer transition flex flex-col justify-between";
-        labelEcto.className = "border-2 border-slate-200 bg-slate-50 p-2.5 rounded-xl cursor-pointer transition flex flex-col justify-between opacity-60";
-        if (startDateSection) startDateSection.classList.remove('hidden');
-    } else {
-        labelEcto.className = "border-2 border-indigo-500 bg-indigo-50/50 p-2.5 rounded-xl cursor-pointer transition flex flex-col justify-between";
-        labelCarb.className = "border-2 border-slate-200 bg-slate-50 p-2.5 rounded-xl cursor-pointer transition flex flex-col justify-between opacity-60";
-        if (startDateSection) startDateSection.classList.add('hidden');
-    }
-}
-
-function openProfileModal() {
-    document.getElementById('input-weight').value = userProfile.weight || 74;
-    document.getElementById('input-height').value = userProfile.height || 175;
-    document.getElementById('input-age').value = userProfile.age || 23;
-    document.getElementById('cycle-start-date').value = userProfile.cycle_start_date || getTodayStrUTC8();
-
-    const plan = userProfile.diet_plan || 'carb_cycling';
-    const radio = document.querySelector(`input[name="diet_plan"][value="${plan}"]`);
-    if (radio) radio.checked = true;
-
-    updateBmiCalculation();
-    updateDietPlanCardUI();
-
-    const modal = document.getElementById('profile-modal');
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-}
-
-function closeProfileModal() {
-    const modal = document.getElementById('profile-modal');
-    modal.classList.add('hidden');
-    modal.classList.remove('flex');
-}
-
-async function handleProfileSave(e) {
+async function handleProfileSubmit(e) {
     e.preventDefault();
     if (!currentUser) return;
 
@@ -233,299 +274,79 @@ async function handleProfileSave(e) {
     const height = parseFloat(document.getElementById('input-height').value) || 175;
     const age = parseInt(document.getElementById('input-age').value) || 23;
     const startDate = document.getElementById('cycle-start-date').value || getTodayStrUTC8();
-    const dietPlan = document.querySelector('input[name="diet_plan"]:checked')?.value || 'carb_cycling';
 
-    userProfile = { weight, height, age, diet_plan: dietPlan, cycle_start_date: startDate };
+    const selectedRadio = document.querySelector('input[name="diet_plan"]:checked');
+    const plan = selectedRadio ? selectedRadio.value : 'carb_cycling';
 
+    userProfile = { weight, height, age, cycle_start_date: startDate, diet_plan: plan };
     await dbSaveProfile(currentUser.id, userProfile);
+
     closeProfileModal();
     recalculateAndRender();
 }
 
-async function toggleFavoriteFood(e, foodId) {
-    e.stopPropagation();
-    if (!currentUser) return;
-
-    const isFav = userFavoriteIds.has(foodId);
-    if (isFav) userFavoriteIds.delete(foodId);
-    else userFavoriteIds.add(foodId);
-
-    await dbToggleFavorite(currentUser.id, foodId, isFav);
-    renderPresetFoodList();
-}
-
-function switchFoodTab(tab) {
-    currentFoodTab = tab;
-    ['all', 'fav', 'recent'].forEach(t => {
-        const btn = document.getElementById(`tab-btn-${t}`);
-        if (btn) {
-            if (t === tab) btn.classList.add('active');
-            else btn.classList.remove('active');
-        }
-    });
-    renderPresetFoodList();
-}
-
-function openFoodSelectModal(mealType) {
-    activeMealType = mealType;
-    const mealNameMap = {
-        breakfast: currentLang === 'zh' ? '早餐' : 'Breakfast',
-        lunch: currentLang === 'zh' ? '午餐' : 'Lunch',
-        dinner: currentLang === 'zh' ? '晚餐' : 'Dinner',
-        snack: currentLang === 'zh' ? '加餐' : 'Snack'
-    };
-
-    document.getElementById('modal-meal-title').innerText = `${currentLang === 'zh' ? '添加' : 'Add to'} ${mealNameMap[mealType]}`;
-    document.getElementById('food-search-input').value = '';
-    switchFoodTab('all');
-
-    const modal = document.getElementById('food-select-modal');
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-}
-
-function closeFoodSelectModal() {
-    const modal = document.getElementById('food-select-modal');
-    modal.classList.add('hidden');
-    modal.classList.remove('flex');
-}
-
-function renderPresetFoodList() {
-    const container = document.getElementById('food-preset-list');
-    container.innerHTML = '';
-
-    const query = (document.getElementById('food-search-input').value || '').trim().toLowerCase();
-    let listToDisplay = [...allFoodsList];
-
-    if (currentFoodTab === 'fav') {
-        listToDisplay = listToDisplay.filter(item => userFavoriteIds.has(item.id));
-    } else if (currentFoodTab === 'recent') {
-        const loggedFoodNames = foodEntries.map(e => e.food_name_zh || e.food_name || '');
-        listToDisplay = listToDisplay.filter(item => loggedFoodNames.some(name => name.includes(item.name_zh)));
-    }
-
-    const filtered = listToDisplay.filter(item => {
-        const nameZh = (item.name_zh || '').toLowerCase();
-        const nameEn = (item.name_en || '').toLowerCase();
-        return nameZh.includes(query) || nameEn.includes(query);
-    });
-
-    if (filtered.length === 0) {
-        let emptyHint = currentLang === 'zh' ? '未找到相关食材' : 'No food found';
-        if (currentFoodTab === 'fav') emptyHint = currentLang === 'zh' ? '暂无收藏食材，点击 ⭐ 即可快速收藏' : 'No favorite foods yet';
-        if (currentFoodTab === 'recent') emptyHint = currentLang === 'zh' ? '今日暂无食用记录' : 'No recent foods logged today';
-
-        container.innerHTML = `
-      <div class="flex flex-col items-center justify-center h-full text-slate-400 text-xs space-y-2.5 py-10">
-        <i class="fa-regular fa-folder-open text-3xl text-slate-300"></i>
-        <p class="font-medium">${emptyHint}</p>
-      </div>
-    `;
-        return;
-    }
-
-    filtered.forEach(item => {
-        const name = currentLang === 'zh' ? item.name_zh : item.name_en;
-        const isFav = userFavoriteIds.has(item.id);
-
-        const div = document.createElement('div');
-        div.className = "flex items-center justify-between py-2 hover:bg-slate-50 px-2 rounded-xl transition cursor-pointer";
-        div.onclick = () => selectFoodItemToPortionModal(item.id);
-
-        div.innerHTML = `
-      <div class="flex items-center gap-3">
-        <button onclick="toggleFavoriteFood(event, '${item.id}')" class="text-base p-1 hover:scale-110 transition">
-          <i class="${isFav ? 'fa-solid fa-star text-amber-400' : 'fa-regular fa-star text-slate-300 hover:text-amber-300'}"></i>
-        </button>
-        <span class="text-2xl">${item.icon}</span>
-        <div>
-          <p class="font-bold text-slate-800 text-sm">${name}</p>
-          <p class="text-[11px] text-slate-400">${item.kcal} kcal / 100g</p>
-        </div>
-      </div>
-      <button class="w-8 h-8 rounded-full bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white flex items-center justify-center font-bold text-sm transition">
-        <i class="fa-solid fa-plus"></i>
-      </button>
-    `;
-        container.appendChild(div);
-    });
-}
-
-function openCustomFoodModal() {
-    closeFoodSelectModal();
-    document.getElementById('custom-name-input').value = '';
-    document.getElementById('custom-kcal-input').value = '';
-    document.getElementById('custom-c-input').value = '';
-    document.getElementById('custom-p-input').value = '';
-    document.getElementById('custom-f-input').value = '';
-
-    const modal = document.getElementById('custom-food-modal');
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-}
-
-function closeCustomFoodModal() {
-    const modal = document.getElementById('custom-food-modal');
-    modal.classList.add('hidden');
-    modal.classList.remove('flex');
-}
-
-async function handleCustomFoodSubmit(e) {
-    e.preventDefault();
-    const name = document.getElementById('custom-name-input').value.trim();
-    const icon = document.getElementById('custom-icon-input').value.trim() || '🥗';
-    const kcal = parseFloat(document.getElementById('custom-kcal-input').value) || 0;
-    const c = parseFloat(document.getElementById('custom-c-input').value) || 0;
-    const p = parseFloat(document.getElementById('custom-p-input').value) || 0;
-    const f = parseFloat(document.getElementById('custom-f-input').value) || 0;
-
-    if (!name) return;
-
-    const newFoodItem = await dbInsertCustomFood({ name_zh: name, name_en: name, icon, kcal, c, p, f, is_preset: false });
-    allFoodsList.push(newFoodItem);
-
-    closeCustomFoodModal();
-    openFoodSelectModal(activeMealType);
-}
-
-function selectFoodItemToPortionModal(foodId) {
-    activeSelectedFood = allFoodsList.find(f => f.id === foodId);
-    if (!activeSelectedFood) return;
-
-    closeFoodSelectModal();
-
-    document.getElementById('portion-food-icon').innerText = activeSelectedFood.icon;
-    document.getElementById('portion-food-name').innerText = currentLang === 'zh' ? activeSelectedFood.name_zh : activeSelectedFood.name_en;
-    document.getElementById('portion-grams-input').value = 100;
-
-    updatePortionCalculations();
-
-    const modal = document.getElementById('portion-input-modal');
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-}
-
-function closePortionModal() {
-    const modal = document.getElementById('portion-input-modal');
-    modal.classList.add('hidden');
-    modal.classList.remove('flex');
-}
-
-function adjustGrams(delta) {
-    const input = document.getElementById('portion-grams-input');
-    let val = (parseFloat(input.value) || 0) + delta;
-    if (val < 5) val = 5;
-    input.value = val;
-    updatePortionCalculations();
-}
-
-function setQuickGrams(grams) {
-    document.getElementById('portion-grams-input').value = grams;
-    updatePortionCalculations();
-}
-
-function updatePortionCalculations() {
-    if (!activeSelectedFood) return;
-
-    const grams = parseFloat(document.getElementById('portion-grams-input').value) || 0;
-    const factor = grams / 100;
-
-    const cal = Math.round(activeSelectedFood.kcal * factor);
-    const p = (activeSelectedFood.p * factor).toFixed(1);
-    const c = (activeSelectedFood.c * factor).toFixed(1);
-    const f = (activeSelectedFood.f * factor).toFixed(1);
-
-    document.getElementById('portion-calc-kcal').innerText = `${cal} kcal`;
-    document.getElementById('portion-calc-p').innerText = `${p}g`;
-    document.getElementById('portion-calc-c').innerText = `${c}g`;
-    document.getElementById('portion-calc-f').innerText = `${f}g`;
-}
-
-// 保存食物记录并严格同步 Supabase 数据库
-async function saveFoodPortionEntry() {
-    if (!activeSelectedFood) return;
-
-    const grams = parseFloat(document.getElementById('portion-grams-input').value) || 0;
-    if (grams <= 0) return;
-
-    if (!currentUser) {
-        alert(currentLang === 'zh' ? '当前未登录账号，请先登录！' : 'Please login first!');
-        return;
-    }
-
-    const factor = grams / 100;
-    const todayStr = getTodayStrUTC8();
-
-    const entryData = {
-        user_id: currentUser.id,
-        date: todayStr,
-        meal_type: activeMealType,
-        food_name_zh: activeSelectedFood.name_zh,
-        food_name_en: activeSelectedFood.name_en,
-        food_icon: activeSelectedFood.icon || '🥗',
-        grams: grams,
-        protein: parseFloat((activeSelectedFood.p * factor).toFixed(1)),
-        carbs: parseFloat((activeSelectedFood.c * factor).toFixed(1)),
-        fat: parseFloat((activeSelectedFood.f * factor).toFixed(1)),
-        calories: Math.round(activeSelectedFood.kcal * factor)
-    };
-
-    const savedItem = await dbInsertFoodEntry(entryData);
-
-    if (savedItem) {
-        foodEntries.push(savedItem);
-        closePortionModal();
-        recalculateAndRender();
-    }
-}
-
-async function removeEntry(id) {
-    await dbDeleteFoodEntry(id, currentUser?.id);
-    foodEntries = foodEntries.filter(e => e.id !== id);
-    recalculateAndRender();
-}
-
-async function clearTodayLog() {
-    if (confirm(i18n[currentLang].confirm_clear)) {
-        const todayStr = getTodayStrUTC8();
-        await dbClearTodayLogs(currentUser?.id, todayStr);
-        foodEntries = [];
-        recalculateAndRender();
-    }
-}
-
 function recalculateAndRender() {
-    currentCycleState = computeCycleState(userProfile);
-    targets = calculateMacroTargets(userProfile.weight, currentCycleState);
+    const startDateStr = userProfile.cycle_start_date || currentViewDate;
+    const start = new Date(startDateStr);
+    const currentView = new Date(currentViewDate);
+    const diffDays = Math.floor((currentView - start) / (1000 * 60 * 60 * 24));
+    const dayIndex = ((diffDays % 4) + 4) % 4;
+    const dayNumber = dayIndex + 1;
+    const isHighCarb = dayNumber === 4;
 
-    renderBanner();
-    renderDashboard();
-    renderMealLogSections();
+    const cycleState = {
+        todayStr: currentViewDate,
+        dietPlan: userProfile.diet_plan || 'carb_cycling',
+        dayNumber: dayNumber,
+        isHighCarb: isHighCarb
+    };
+
+    const macroTargets = calculateMacroTargets(userProfile.weight, cycleState);
+
+    renderBannerUI(cycleState);
+    renderDashboardUI(cycleState, macroTargets);
+    renderMealLog();
 }
 
-function renderBanner() {
-    document.getElementById('today-date-text').innerText = `${currentLang === 'zh' ? '今天' : 'Today'}: ${currentCycleState.todayStr}`;
+function renderBannerUI(cycleState) {
+    const t = i18n[currentLang];
+    document.getElementById('today-date-text').innerText = `${currentLang === 'zh' ? '今天' : 'Today'}: ${cycleState.todayStr}`;
+
+    const displayEl = document.getElementById('view-date-display');
+    if (displayEl) {
+        displayEl.innerText = `${cycleState.todayStr} (${getWeekdayName(cycleState.todayStr, currentLang)})`;
+    }
+
     const titleEl = document.getElementById('cycle-day-title');
     const descEl = document.getElementById('cycle-strategy-desc');
-    const bannerTag = document.getElementById('banner-mode-tag');
+    const banner = document.getElementById('cycle-banner');
+    const modeTag = document.getElementById('banner-mode-tag');
 
-    if (currentCycleState.isEctomorph) {
-        titleEl.innerText = i18n[currentLang].ectomorph_title;
-        descEl.innerText = i18n[currentLang].strat_ectomorph;
-        bannerTag.innerText = i18n[currentLang].tag_ectomorph;
+    if (cycleState.dietPlan === 'balanced') {
+        titleEl.innerText = t.balanced_title;
+        descEl.innerText = t.strat_balanced;
+        banner.className = "bg-gradient-to-r from-emerald-600 to-teal-700 rounded-2xl shadow-md p-3.5 text-white relative overflow-hidden transition-all";
+        modeTag.innerText = t.tag_balanced;
+    } else if (cycleState.dietPlan === 'ectomorph') {
+        titleEl.innerText = t.ectomorph_title;
+        descEl.innerText = t.strat_ectomorph;
+        banner.className = "bg-gradient-to-r from-blue-600 to-indigo-700 rounded-2xl shadow-md p-3.5 text-white relative overflow-hidden transition-all";
+        modeTag.innerText = t.tag_ectomorph;
+    } else if (cycleState.isHighCarb) {
+        titleEl.innerText = t.high_title;
+        descEl.innerText = t.strat_high;
+        banner.className = "bg-gradient-to-r from-teal-500 to-emerald-600 rounded-2xl shadow-md p-3.5 text-white relative overflow-hidden transition-all";
+        modeTag.innerText = t.tag_auto;
     } else {
-        bannerTag.innerText = i18n[currentLang].tag_auto;
-        if (currentCycleState.isHighCarb) {
-            titleEl.innerText = i18n[currentLang].high_title;
-            descEl.innerText = i18n[currentLang].strat_high;
-        } else {
-            titleEl.innerText = i18n[currentLang].low_title.replace('{day}', currentCycleState.dayNumber);
-            descEl.innerText = i18n[currentLang].strat_low;
-        }
+        titleEl.innerText = t.low_title.replace('{day}', cycleState.dayNumber);
+        descEl.innerText = t.strat_low;
+        banner.className = "bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl shadow-md p-3.5 text-white relative overflow-hidden transition-all";
+        modeTag.innerText = t.tag_auto;
     }
 }
 
-function renderDashboard() {
+function renderDashboardUI(cycleState, targets) {
+    const t = i18n[currentLang];
     const totals = foodEntries.reduce((acc, curr) => ({
         p: acc.p + (curr.protein || 0),
         c: acc.c + (curr.carbs || 0),
@@ -533,139 +354,452 @@ function renderDashboard() {
         cal: acc.cal + (curr.calories || 0)
     }), { p: 0, c: 0, f: 0, cal: 0 });
 
-    const remainingKcal = Math.max(0, targets.cal - totals.cal);
+    document.getElementById('stat-intake-kcal').innerText = Math.round(totals.cal);
+    const rem = targets.cal - Math.round(totals.cal);
+    document.getElementById('stat-remaining-kcal').innerText = rem > 0 ? rem : 0;
+    document.getElementById('stat-target-kcal').innerText = `${t.target_prefix} ${targets.cal} kcal`;
 
-    document.getElementById('stat-intake-kcal').innerText = totals.cal;
-    document.getElementById('stat-remaining-kcal').innerText = remainingKcal;
-    document.getElementById('stat-target-kcal').innerText = `${currentLang === 'zh' ? '目标' : 'Target'} ${targets.cal} kcal`;
-
-    if (currentCycleState.isEctomorph) {
-        document.getElementById('stat-cycle-mode-text').innerText = currentLang === 'zh' ? '外胚型增肌' : 'Ectomorph';
-        document.getElementById('stat-cycle-day-sub').innerText = currentLang === 'zh' ? '热量盈余' : 'Caloric Surplus';
+    if (cycleState.dietPlan === 'balanced') {
+        document.getElementById('stat-cycle-mode-text').innerText = t.plan_balanced_title;
+        document.getElementById('stat-cycle-day-sub').innerText = currentLang === 'zh' ? '日常维持' : 'Maintenance';
+    } else if (cycleState.dietPlan === 'ectomorph') {
+        document.getElementById('stat-cycle-mode-text').innerText = t.plan_ecto_title;
+        document.getElementById('stat-cycle-day-sub').innerText = currentLang === 'zh' ? '稳定高碳' : 'High Carb';
     } else {
-        document.getElementById('stat-cycle-mode-text').innerText = currentCycleState.isHighCarb ? (currentLang === 'zh' ? '高碳日' : 'High Carb') : (currentLang === 'zh' ? '低碳日' : 'Low Carb');
-        document.getElementById('stat-cycle-day-sub').innerText = `${currentLang === 'zh' ? '第' : 'Day'} ${currentCycleState.dayNumber} ${currentLang === 'zh' ? '天' : ''}`;
+        document.getElementById('stat-cycle-mode-text').innerText = cycleState.isHighCarb ? (currentLang === 'zh' ? '高碳日' : 'High Carb') : (currentLang === 'zh' ? '低碳日' : 'Low Carb');
+        document.getElementById('stat-cycle-day-sub').innerText = `${currentLang === 'zh' ? '第' : 'Day'} ${cycleState.dayNumber} ${currentLang === 'zh' ? '天' : ''}`;
     }
 
-    document.getElementById('ratio-c').innerText = `${totals.c.toFixed(1)} / ${targets.c}g`;
+    const unitG = t.unit_g;
+    document.getElementById('ratio-c').innerText = `${totals.c.toFixed(1)} / ${targets.c} ${unitG}`;
     updateBar('bar-c', totals.c, targets.c);
 
-    document.getElementById('ratio-p').innerText = `${totals.p.toFixed(1)} / ${targets.p}g`;
+    document.getElementById('ratio-p').innerText = `${totals.p.toFixed(1)} / ${targets.p} ${unitG}`;
     updateBar('bar-p', totals.p, targets.p);
 
-    document.getElementById('ratio-f').innerText = `${totals.f.toFixed(1)} / ${targets.f}g`;
+    document.getElementById('ratio-f').innerText = `${totals.f.toFixed(1)} / ${targets.f} ${unitG}`;
     updateBar('bar-f', totals.f, targets.f);
+
+    if (currentUser) {
+        dbSyncDailyLog(currentUser.id, currentViewDate, totals, cycleState, userProfile);
+    }
 }
 
 function updateBar(id, val, target) {
     const pct = Math.min(100, Math.round((val / (target || 1)) * 100));
-    const el = document.getElementById(id);
-    if (el) el.style.width = `${pct}%`;
+    document.getElementById(id).style.width = `${pct}%`;
 }
 
-function renderMealLogSections() {
+function renderMealLog() {
     const container = document.getElementById('meal-sections-container');
     container.innerHTML = '';
+    const t = i18n[currentLang];
 
     if (!foodEntries || foodEntries.length === 0) {
         container.innerHTML = `
-      <div class="bg-white rounded-3xl p-8 text-center border-2 border-dashed border-slate-200/80 shadow-sm flex flex-col items-center justify-center space-y-3">
+      <div class="bg-white rounded-3xl p-8 text-center border-2 border-dashed border-slate-200/80 shadow-2xs flex flex-col items-center justify-center space-y-3">
         <div class="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center text-3xl shadow-inner border border-slate-100">
           🥗
         </div>
         <div>
-          <p class="text-xs font-bold text-slate-600">
-            ${currentLang === 'zh' ? '记录饮食获取今日营养分析' : 'Log meals to get daily nutrition analysis'}
-          </p>
-          <span class="inline-block mt-2 text-[10px] bg-emerald-50 text-emerald-600 px-3 py-1 rounded-full font-bold border border-emerald-200">
-            ${currentLang === 'zh' ? '今日饮食建议' : 'Diet Advice'}
-          </span>
+          <p class="text-xs font-bold text-slate-600">${t.empty_log}</p>
         </div>
       </div>
     `;
         return;
     }
 
-    const mealConfig = [
-        { key: 'breakfast', title: i18n[currentLang].bf_title, ratioMin: 0.25, ratioMax: 0.30 },
-        { key: 'lunch', title: i18n[currentLang].lunch_title, ratioMin: 0.35, ratioMax: 0.40 },
-        { key: 'dinner', title: i18n[currentLang].dinner_title, ratioMin: 0.25, ratioMax: 0.30 },
-        { key: 'snack', title: i18n[currentLang].snack_title, ratioMin: 0.05, ratioMax: 0.10 }
+    const meals = [
+        { key: 'breakfast', title: `🍳 ${t.bf_title}` },
+        { key: 'lunch', title: `🍔 ${t.lunch_title}` },
+        { key: 'dinner', title: `🍲 ${t.dinner_title}` },
+        { key: 'snack', title: `🍎 ${t.snack_title}` }
     ];
 
-    mealConfig.forEach(cat => {
-        const entries = foodEntries.filter(item => (item.meal_type || 'breakfast') === cat.key);
-        if (entries.length === 0) return;
+    meals.forEach(m => {
+        const list = foodEntries.filter(e => (e.meal_category || e.meal_type) === m.key);
+        if (list.length === 0) return;
 
-        const totalMealKcal = entries.reduce((sum, item) => sum + (item.calories || 0), 0);
-        const recMin = Math.round(targets.cal * cat.ratioMin);
-        const recMax = Math.round(targets.cal * cat.ratioMax);
-        const recText = `${i18n[currentLang].rec_kcal_prefix} ${recMin} - ${recMax} 千卡`;
+        const sec = document.createElement('div');
+        sec.className = 'bg-slate-50/70 p-2.5 rounded-xl border border-slate-100 space-y-2';
 
-        const cardDiv = document.createElement('div');
-        cardDiv.className = "bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-3";
+        let html = `<div class="flex justify-between items-center font-bold text-slate-700">
+                  <span>${m.title}</span>
+                  <button onclick="openFoodSelectModal('${m.key}')" class="text-indigo-600 hover:text-indigo-800 text-[11px] font-semibold flex items-center gap-1">
+                    <i class="fa-solid fa-plus"></i> ${t.add_more}
+                  </button>
+                </div>`;
 
-        let headerHtml = `
-      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
-        <div class="flex items-center gap-2">
-          <span class="font-extrabold text-slate-800 text-base">${cat.title}</span>
-          <span class="text-[11px] text-slate-400 font-medium">${recText}</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="font-bold text-slate-700 text-sm">${totalMealKcal} 千卡</span>
-          <button onclick="openFoodSelectModal('${cat.key}')" class="w-6 h-6 rounded-full bg-slate-100 hover:bg-indigo-50 text-slate-500 hover:text-indigo-600 flex items-center justify-center text-xs transition">
-            <i class="fa-solid fa-plus"></i>
-          </button>
-        </div>
-      </div>
-    `;
+        html += `<div class="space-y-1.5">`;
+        list.forEach(item => {
+            const imageHtml = item.image_url
+                ? `<img src="${item.image_url}" class="w-6 h-6 rounded-md object-cover">`
+                : `<span class="text-base">${item.icon || '🥗'}</span>`;
 
-        let listHtml = entries.map(item => {
-            const name = currentLang === 'zh' ? (item.food_name_zh || item.food_name || '食物') : (item.food_name_en || item.food_name || 'Food');
-            const cleanName = name ? name.replace(/\s*\(\d+g\)/g, '') : '食物';
-            const icon = item.food_icon || '🥗';
-            const grams = item.grams || 100;
+            const foodName = currentLang === 'zh' ? (item.food_name_zh || item.food_name) : (item.food_name_en || item.food_name_zh || item.food_name);
 
-            return `
-        <div class="flex items-center justify-between py-2 border-b border-slate-50 last:border-none">
-          <div class="flex items-center gap-3">
-            <div class="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-xl shrink-0 border border-slate-100">
-              ${icon}
-            </div>
+            html += `
+        <div class="flex justify-between items-center bg-white p-2 rounded-lg border border-slate-100 shadow-2xs">
+          <div class="flex items-center gap-2">
+            ${imageHtml}
             <div>
-              <h4 class="font-bold text-slate-800 text-sm leading-tight">${cleanName}</h4>
-              <p class="text-xs text-slate-400 mt-0.5">${grams} 克</p>
+              <p class="font-bold text-slate-700 text-xs">${foodName}</p>
+              <p class="text-[10px] text-slate-400">C:${item.carbs}g | P:${item.protein}g | F:${item.fat}g</p>
             </div>
           </div>
-          <div class="flex items-center gap-3">
-            <span class="font-semibold text-slate-600 text-xs">${item.calories} 千卡</span>
-            <button data-id="${item.id}" class="btn-del-entry text-slate-300 hover:text-rose-500 transition p-1 text-sm">
-              <i class="fa-solid fa-trash-can"></i>
+          <div class="flex items-center gap-2">
+            <span class="font-black text-indigo-600 text-xs">${item.calories} kcal</span>
+            <button onclick="removeFoodEntry('${item.id}')" class="text-slate-300 hover:text-rose-500 p-1 transition">
+              <i class="fa-solid fa-xmark text-sm"></i>
             </button>
           </div>
         </div>
       `;
-        }).join('');
-
-        cardDiv.innerHTML = headerHtml + `<div class="space-y-1">${listHtml}</div>`;
-        container.appendChild(cardDiv);
-    });
-
-    document.querySelectorAll('.btn-del-entry').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            const id = e.currentTarget.getAttribute('data-id');
-            removeEntry(id);
         });
+        html += `</div>`;
+
+        sec.innerHTML = html;
+        container.appendChild(sec);
     });
 }
 
-function startClockUTC8() {
-    setInterval(() => {
-        const now = new Date();
-        const timeStr = now.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
-        const timeEl = document.getElementById('current-time-display');
-        if (timeEl) {
-            timeEl.innerText = `${currentLang === 'zh' ? 'UTC+8 时间' : 'UTC+8 Time'}: ${timeStr}`;
+window.openFoodSelectModal = function(mealKey) {
+    activeMealCategory = mealKey;
+    const t = i18n[currentLang];
+    const titles = {
+        breakfast: `🍳 ${t.bf_title}`,
+        lunch: `🍔 ${t.lunch_title}`,
+        dinner: `🍲 ${t.dinner_title}`,
+        snack: `🍎 ${t.snack_title}`
+    };
+    document.getElementById('modal-meal-title').innerText = `${t.modal_add_title} ${titles[mealKey] || ''}`;
+
+    switchFoodTab('all');
+    toggleModal('food-select-modal', true);
+}
+
+function closeFoodSelectModal() {
+    toggleModal('food-select-modal', false);
+}
+
+function renderPresetFoodList() {
+    const listEl = document.getElementById('food-preset-list');
+    const search = document.getElementById('food-search-input').value.toLowerCase().trim();
+    const t = i18n[currentLang];
+    listEl.innerHTML = '';
+
+    const recentNames = new Set(foodEntries.map(e => (e.food_name_zh || e.food_name || '').split(' (')[0]));
+
+    const filtered = dbFoods.filter(f => {
+        const nameZh = (f.name_zh || f.name || '').toLowerCase();
+        const nameEn = (f.name_en || '').toLowerCase();
+        const matchesSearch = nameZh.includes(search) || nameEn.includes(search);
+
+        if (!matchesSearch) return false;
+
+        if (activeFoodTab === 'fav') {
+            return favIds.has(f.id);
+        } else if (activeFoodTab === 'recent') {
+            return recentNames.has(f.name_zh || f.name);
         }
-    }, 1000);
+        return true;
+    });
+
+    if (filtered.length === 0) {
+        const emptyMsgs = {
+            'all': t.no_food_found,
+            'fav': t.fav_tip_empty,
+            'recent': t.recent_tip_empty
+        };
+        listEl.innerHTML = `<p class="text-center text-slate-400 py-8 text-xs">${emptyMsgs[activeFoodTab]}</p>`;
+        return;
+    }
+
+    filtered.forEach(f => {
+        const div = document.createElement('div');
+        div.className = "p-2.5 hover:bg-slate-50 transition flex justify-between items-center cursor-pointer";
+
+        const isFav = favIds.has(f.id);
+        const starClass = isFav ? "text-amber-400 fa-solid" : "text-slate-300 fa-regular hover:text-amber-300";
+
+        const imageHtml = f.image_url
+            ? `<img src="${f.image_url}" class="w-9 h-9 rounded-xl object-cover border border-slate-100">`
+            : `<span class="text-2xl">${f.icon || '🥗'}</span>`;
+
+        const unit = f.unit || 'g';
+        const kcal = f.kcal || f.calories || 0;
+        const name = currentLang === 'zh'
+            ? (f.name_zh || f.name || f.name_en)
+            : (f.name_en || f.name_zh || f.name);
+
+        div.innerHTML = `
+      <div class="flex items-center gap-2.5 flex-1 min-w-0 pr-2" onclick="selectFoodItemToPortionModal('${f.id}')">
+        ${imageHtml}
+        <div class="min-w-0 flex-1">
+          <p class="font-bold text-slate-700 text-xs truncate">${name}</p>
+          <p class="text-[10px] text-slate-400">100${unit}：${kcal}kcal | C:${f.c || f.carbs || 0}g P:${f.p || f.protein || 0}g F:${f.f || f.fat || 0}g</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button onclick="toggleFav('${f.id}', event)" class="p-1 text-base transition">
+          <i class="fa-star ${starClass}"></i>
+        </button>
+        <button onclick="selectFoodItemToPortionModal('${f.id}')" class="bg-indigo-50 text-indigo-600 font-bold px-2.5 py-1 rounded-lg text-xs hover:bg-indigo-600 hover:text-white transition">
+          ${t.select_btn}
+        </button>
+      </div>
+    `;
+        listEl.appendChild(div);
+    });
+}
+
+window.toggleFav = async function(foodId, event) {
+    if (event) event.stopPropagation();
+    if (!currentUser) return;
+
+    const isFav = favIds.has(foodId);
+    if (isFav) {
+        favIds.delete(foodId);
+    } else {
+        favIds.add(foodId);
+    }
+
+    renderPresetFoodList();
+    await dbToggleFavorite(currentUser.id, foodId, isFav);
+}
+
+window.selectFoodItemToPortionModal = function(foodId) {
+    activeSelectedFood = dbFoods.find(f => f.id === foodId);
+    if (!activeSelectedFood) return;
+
+    closeFoodSelectModal();
+
+    const unit = activeSelectedFood.unit || 'g';
+    const imgEl = document.getElementById('portion-food-img');
+    const iconEl = document.getElementById('portion-food-icon');
+
+    if (activeSelectedFood.image_url) {
+        imgEl.src = activeSelectedFood.image_url;
+        imgEl.classList.remove('hidden');
+        iconEl.classList.add('hidden');
+    } else {
+        iconEl.innerText = activeSelectedFood.icon || '🥗';
+        iconEl.classList.remove('hidden');
+        imgEl.classList.add('hidden');
+    }
+
+    const name = currentLang === 'zh'
+        ? (activeSelectedFood.name_zh || activeSelectedFood.name || activeSelectedFood.name_en)
+        : (activeSelectedFood.name_en || activeSelectedFood.name_zh || activeSelectedFood.name);
+
+    document.getElementById('portion-food-name').innerText = name;
+    document.getElementById('portion-grams-input').value = 100;
+
+    document.getElementById('portion-unit-tag').innerText = unit;
+    document.getElementById('portion-unit-inline').innerText = unit;
+
+    updatePortionCalculations();
+    toggleModal('portion-input-modal', true);
+}
+
+function updatePortionCalculations() {
+    if (!activeSelectedFood) return;
+    const grams = parseFloat(document.getElementById('portion-grams-input').value) || 0;
+    const factor = grams / 100;
+    const kcal = activeSelectedFood.kcal || activeSelectedFood.calories || 0;
+
+    const c = activeSelectedFood.c !== undefined ? activeSelectedFood.c : (activeSelectedFood.carbs || 0);
+    const p = activeSelectedFood.p !== undefined ? activeSelectedFood.p : (activeSelectedFood.protein || 0);
+    const f = activeSelectedFood.f !== undefined ? activeSelectedFood.f : (activeSelectedFood.fat || 0);
+
+    document.getElementById('portion-calc-kcal').innerText = `${Math.round(kcal * factor)} kcal`;
+    document.getElementById('portion-calc-c').innerText = `${(c * factor).toFixed(1)}g`;
+    document.getElementById('portion-calc-p').innerText = `${(p * factor).toFixed(1)}g`;
+    document.getElementById('portion-calc-f').innerText = `${(f * factor).toFixed(1)}g`;
+}
+
+function adjustGrams(delta) {
+    const input = document.getElementById('portion-grams-input');
+    let current = parseFloat(input.value) || 0;
+    current = Math.max(1, current + delta);
+    input.value = current;
+    updatePortionCalculations();
+}
+
+window.setQuickGrams = function(val) {
+    document.getElementById('portion-grams-input').value = val;
+    updatePortionCalculations();
+}
+
+async function savePortionToLog() {
+    if (!currentUser || !activeSelectedFood) return;
+    const grams = parseFloat(document.getElementById('portion-grams-input').value) || 0;
+    if (grams <= 0) return;
+
+    const factor = grams / 100;
+    const unit = activeSelectedFood.unit || 'g';
+    const kcal = activeSelectedFood.kcal || activeSelectedFood.calories || 0;
+
+    const c = activeSelectedFood.c !== undefined ? activeSelectedFood.c : (activeSelectedFood.carbs || 0);
+    const p = activeSelectedFood.p !== undefined ? activeSelectedFood.p : (activeSelectedFood.protein || 0);
+    const f = activeSelectedFood.f !== undefined ? activeSelectedFood.f : (activeSelectedFood.fat || 0);
+
+    const nameZh = activeSelectedFood.name_zh || activeSelectedFood.name || activeSelectedFood.name_en;
+    const nameEn = activeSelectedFood.name_en || activeSelectedFood.name_zh || activeSelectedFood.name;
+
+    const entryData = {
+        user_id: currentUser.id,
+        date: currentViewDate,
+        meal_category: activeMealCategory,
+        food_name_zh: `${nameZh} (${grams}${unit})`,
+        food_name_en: `${nameEn} (${grams}${unit})`,
+        grams: grams,
+        protein: parseFloat((p * factor).toFixed(1)),
+        carbs: parseFloat((c * factor).toFixed(1)),
+        fat: parseFloat((f * factor).toFixed(1)),
+        calories: Math.round(kcal * factor),
+        icon: activeSelectedFood.icon || '🥗',
+        image_url: activeSelectedFood.image_url || null
+    };
+
+    const newEntry = await dbInsertFoodEntry(entryData);
+    if (newEntry) {
+        foodEntries.push(newEntry);
+        closePortionModal();
+        recalculateAndRender();
+    }
+}
+
+window.removeFoodEntry = async function(id) {
+    await dbDeleteFoodEntry(id, currentUser?.id);
+    foodEntries = foodEntries.filter(e => e.id !== id);
+    recalculateAndRender();
+}
+
+async function clearTodayLog() {
+    if (!currentUser) return;
+    const confirmMsg = currentLang === 'zh'
+        ? `确定清空 ${currentViewDate} 的所有日志记录吗？`
+        : `Are you sure you want to clear all logs for ${currentViewDate}?`;
+
+    if (confirm(confirmMsg)) {
+        await dbClearTodayLogs(currentUser.id, currentViewDate);
+        foodEntries = [];
+        recalculateAndRender();
+    }
+}
+
+function openCustomFoodModal() {
+    closeFoodSelectModal();
+    setCustomImageBase64('');
+    document.getElementById('custom-img-url-input').value = '';
+    document.getElementById('custom-img-preview').src = '';
+    document.getElementById('custom-img-preview').classList.add('hidden');
+    document.getElementById('custom-img-placeholder').classList.remove('hidden');
+
+    toggleModal('custom-food-modal', true);
+}
+
+function closeCustomFoodModal() {
+    toggleModal('custom-food-modal', false);
+}
+
+async function handleCustomFoodSubmit(e) {
+    e.preventDefault();
+
+    const name = document.getElementById('custom-name-input').value.trim();
+    const unit = document.getElementById('custom-unit-select').value || 'g';
+    const kcal = parseFloat(document.getElementById('custom-kcal-input').value) || 0;
+    const c = parseFloat(document.getElementById('custom-c-input').value) || 0;
+    const p = parseFloat(document.getElementById('custom-p-input').value) || 0;
+    const f = parseFloat(document.getElementById('custom-f-input').value) || 0;
+
+    if (!name) return;
+
+    const newCustomFood = {
+        user_id: currentUser ? currentUser.id : null,
+        name_zh: name,
+        name_en: name,
+        image_url: customImageBase64 || null,
+        icon: customImageBase64 ? null : '🥗',
+        unit: unit,
+        kcal: kcal,
+        c: c,
+        p: p,
+        f: f
+    };
+
+    const saved = await dbInsertCustomFood(newCustomFood);
+    if (saved) {
+        dbFoods.push(saved);
+        closeCustomFoodModal();
+        selectFoodItemToPortionModal(saved.id);
+    }
+}
+
+function closePortionModal() {
+    toggleModal('portion-input-modal', false);
+}
+
+function openProfileModal() {
+    document.getElementById('input-weight').value = userProfile.weight || 74;
+    document.getElementById('input-height').value = userProfile.height || 175;
+    document.getElementById('input-age').value = userProfile.age || 23;
+
+    if (fpStartDateInstance) {
+        fpStartDateInstance.setDate(userProfile.cycle_start_date || getTodayStrUTC8());
+    } else {
+        document.getElementById('cycle-start-date').value = userProfile.cycle_start_date || getTodayStrUTC8();
+    }
+
+    const bmi = calculateBMI(userProfile.weight, userProfile.height);
+    const bmiValEl = document.getElementById('bmi-value-text');
+    if (bmiValEl) bmiValEl.innerText = bmi;
+
+    const currentPlan = userProfile.diet_plan || 'carb_cycling';
+    updateDietPlanCardsUI(currentPlan);
+
+    toggleModal('profile-modal', true);
+}
+
+function closeProfileModal() {
+    toggleModal('profile-modal', false);
+}
+
+// 统一更新 DOM 中所有带有 data-i18n 的元素的语言文本
+function applyLanguage() {
+    const t = i18n[currentLang];
+
+    // 更新所有 data-i18n 文本
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (t[key]) {
+            el.innerText = t[key];
+        }
+    });
+
+    // 更新 input 的 placeholder 文本
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        const key = el.getAttribute('data-i18n-placeholder');
+        if (t[key]) {
+            el.placeholder = t[key];
+        }
+    });
+
+    // 更新 Flatpickr 日历组件语言
+    if (fpViewDateInstance) {
+        fpViewDateInstance.set('locale', currentLang === 'zh' ? 'zh' : 'default');
+    }
+    if (fpStartDateInstance) {
+        fpStartDateInstance.set('locale', currentLang === 'zh' ? 'zh' : 'default');
+    }
+
+    // 重新刷新视图
+    recalculateAndRender();
+}
+
+function toggleLanguage() {
+    currentLang = currentLang === 'zh' ? 'en' : 'zh';
+    document.getElementById('lang-text').innerText = currentLang === 'zh' ? 'EN' : 'CN';
+    applyLanguage();
 }
