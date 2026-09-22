@@ -18,12 +18,15 @@ import { startClock, toggleModal, updateDietPlanCardsUI, handleImageUrlInput, ha
 
 let currentLang = 'zh';
 let currentUser = null;
-let isRegisterMode = false;
 let activeMealCategory = 'breakfast';
 let activeFoodTab = 'all';
 
+let pendingEmail = '';
+let pendingUsername = '';
+let pendingPassword = '';
+
 let currentViewDate = getTodayStrUTC8();
-let userProfile = { weight: 74, height: 175, age: 23, cycle_start_date: getTodayStrUTC8(), diet_plan: 'carb_cycling' };
+let userProfile = { weight: 74, height: 175, age: 23, gender: 'male', cycle_start_date: getTodayStrUTC8(), diet_plan: 'carb_cycling' };
 let foodEntries = [];
 let dbFoods = [];
 let favIds = new Set();
@@ -63,11 +66,14 @@ function initApp() {
             if (logoutBtn) logoutBtn.classList.remove('hidden');
 
             document.getElementById('user-email-text').innerText = currentUser.email;
-            loadProfileAndLogs();
+            checkOnboardingAndLoadData();
         } else {
             currentUser = null;
             document.getElementById('btn-open-profile').classList.add('hidden');
             document.getElementById('btn-logout').classList.add('hidden');
+
+            // 展示 Auth 弹窗 Step 1
+            showAuthStep('login');
             toggleModal('auth-modal', true);
         }
     });
@@ -95,22 +101,32 @@ function initFlatpickers() {
 }
 
 function bindEvents() {
-    document.getElementById('auth-form').addEventListener('submit', handleAuthSubmit);
-    document.getElementById('btn-toggle-auth').addEventListener('click', toggleAuthMode);
-    document.getElementById('btn-logout').addEventListener('click', () => supabase.auth.signOut());
+    // 切换登录/注册 UI
+    document.getElementById('btn-goto-register')?.addEventListener('click', () => showAuthStep('register'));
+    document.getElementById('btn-goto-login')?.addEventListener('click', () => showAuthStep('login'));
+    document.getElementById('btn-back-to-reg')?.addEventListener('click', () => showAuthStep('register'));
+
+    document.getElementById('form-login')?.addEventListener('submit', handleLoginSubmit);
+    document.getElementById('form-register')?.addEventListener('submit', handleRegisterSubmit);
+    document.getElementById('form-otp')?.addEventListener('submit', handleOTPSubmit);
+    document.getElementById('btn-resend-otp')?.addEventListener('click', handleResendOTP);
+
+    document.getElementById('onboarding-form')?.addEventListener('submit', handleOnboardingSubmit);
+
+    document.getElementById('btn-logout')?.addEventListener('click', () => supabase.auth.signOut());
 
     document.getElementById('btn-prev-day')?.addEventListener('click', () => changeViewDate(-1));
     document.getElementById('btn-next-day')?.addEventListener('click', () => changeViewDate(1));
     document.getElementById('btn-today-shortcut')?.addEventListener('click', () => setViewDate(getTodayStrUTC8()));
 
-    document.getElementById('lang-btn').addEventListener('click', toggleLanguage);
-    document.getElementById('btn-open-profile').addEventListener('click', openProfileModal);
-    document.getElementById('btn-edit-profile-shortcut').addEventListener('click', openProfileModal);
-    document.getElementById('btn-close-profile').addEventListener('click', closeProfileModal);
-    document.getElementById('btn-cancel-profile').addEventListener('click', closeProfileModal);
-    document.getElementById('profile-form').addEventListener('submit', handleProfileSubmit);
+    document.getElementById('lang-btn')?.addEventListener('click', toggleLanguage);
+    document.getElementById('btn-open-profile')?.addEventListener('click', openProfileModal);
+    document.getElementById('btn-edit-profile-shortcut')?.addEventListener('click', openProfileModal);
+    document.getElementById('btn-close-profile')?.addEventListener('click', closeProfileModal);
+    document.getElementById('btn-cancel-profile')?.addEventListener('click', closeProfileModal);
+    document.getElementById('profile-form')?.addEventListener('submit', handleProfileSubmit);
 
-    document.getElementById('btn-set-today').addEventListener('click', () => {
+    document.getElementById('btn-set-today')?.addEventListener('click', () => {
         const today = getTodayStrUTC8();
         if (fpStartDateInstance) {
             fpStartDateInstance.setDate(today);
@@ -123,30 +139,192 @@ function bindEvents() {
         radio.addEventListener('change', (e) => updateDietPlanCardsUI(e.target.value));
     });
 
-    document.getElementById('tab-btn-all').addEventListener('click', () => switchFoodTab('all'));
-    document.getElementById('tab-btn-fav').addEventListener('click', () => switchFoodTab('fav'));
-    document.getElementById('tab-btn-recent').addEventListener('click', () => switchFoodTab('recent'));
+    document.getElementById('tab-btn-all')?.addEventListener('click', () => switchFoodTab('all'));
+    document.getElementById('tab-btn-fav')?.addEventListener('click', () => switchFoodTab('fav'));
+    document.getElementById('tab-btn-recent')?.addEventListener('click', () => switchFoodTab('recent'));
 
-    document.getElementById('btn-close-food-modal').addEventListener('click', closeFoodSelectModal);
-    document.getElementById('food-search-input').addEventListener('input', renderPresetFoodList);
+    document.getElementById('btn-close-food-modal')?.addEventListener('click', closeFoodSelectModal);
+    document.getElementById('food-search-input')?.addEventListener('input', renderPresetFoodList);
 
-    document.getElementById('btn-open-custom-food').addEventListener('click', openCustomFoodModal);
-    document.getElementById('btn-close-custom-modal').addEventListener('click', closeCustomFoodModal);
-    document.getElementById('custom-food-form').addEventListener('submit', handleCustomFoodSubmit);
+    document.getElementById('btn-open-custom-food')?.addEventListener('click', openCustomFoodModal);
+    document.getElementById('btn-close-custom-modal')?.addEventListener('click', closeCustomFoodModal);
+    document.getElementById('custom-food-form')?.addEventListener('submit', handleCustomFoodSubmit);
 
-    document.getElementById('custom-img-url-input').addEventListener('input', (e) => handleImageUrlInput(e, setCustomImageBase64));
-    document.getElementById('custom-img-file-input').addEventListener('change', (e) => handleImageFileSelect(e, setCustomImageBase64));
+    document.getElementById('custom-img-url-input')?.addEventListener('input', (e) => handleImageUrlInput(e, setCustomImageBase64));
+    document.getElementById('custom-img-file-input')?.addEventListener('change', (e) => handleImageFileSelect(e, setCustomImageBase64));
 
-    document.getElementById('btn-close-portion-modal').addEventListener('click', closePortionModal);
-    document.getElementById('portion-grams-input').addEventListener('input', updatePortionCalculations);
-    document.getElementById('btn-step-minus').addEventListener('click', () => adjustGrams(-10));
-    document.getElementById('btn-step-plus').addEventListener('click', () => adjustGrams(10));
-    document.getElementById('btn-confirm-save-portion').addEventListener('click', savePortionToLog);
+    document.getElementById('btn-close-portion-modal')?.addEventListener('click', closePortionModal);
+    document.getElementById('portion-grams-input')?.addEventListener('input', updatePortionCalculations);
+    document.getElementById('btn-step-minus')?.addEventListener('click', () => adjustGrams(-10));
+    document.getElementById('btn-step-plus')?.addEventListener('click', () => adjustGrams(10));
+    document.getElementById('btn-confirm-save-portion')?.addEventListener('click', savePortionToLog);
 
-    document.getElementById('btn-clear-today').addEventListener('click', clearTodayLog);
+    document.getElementById('btn-clear-today')?.addEventListener('click', clearTodayLog);
 }
 
-// 转换星期几字符串（适配中英文）
+// --- Step 视图切换辅助函数 ---
+function showAuthStep(step) {
+    document.getElementById('auth-step-login').classList.add('hidden');
+    document.getElementById('auth-step-register').classList.add('hidden');
+    document.getElementById('auth-step-otp').classList.add('hidden');
+
+    if (step === 'login') {
+        document.getElementById('auth-step-login').classList.remove('hidden');
+    } else if (step === 'register') {
+        document.getElementById('auth-step-register').classList.remove('hidden');
+    } else if (step === 'otp') {
+        document.getElementById('auth-step-otp').classList.remove('hidden');
+    }
+}
+
+// --- Auth Step 1A: 账号登录 ---
+async function handleLoginSubmit(e) {
+    e.preventDefault();
+    const email = document.getElementById('login-email').value.trim();
+    const password = document.getElementById('login-password').value;
+    const msgEl = document.getElementById('login-msg');
+
+    msgEl.className = "text-xs text-center font-medium block text-indigo-600";
+    msgEl.innerText = "登录中...";
+
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+        msgEl.className = "text-xs text-center font-medium block text-rose-500";
+        msgEl.innerText = error.message;
+    }
+}
+
+// --- Auth Step 1B: 注册提交与发送 6 位数 OTP 验证码 ---
+async function handleRegisterSubmit(e) {
+    e.preventDefault();
+    const username = document.getElementById('reg-username').value.trim();
+    const email = document.getElementById('reg-email').value.trim();
+    const password = document.getElementById('reg-password').value;
+    const confirm = document.getElementById('reg-password-confirm').value;
+    const msgEl = document.getElementById('reg-msg');
+
+    if (password !== confirm) {
+        msgEl.className = "text-xs text-center font-medium block text-rose-500";
+        msgEl.innerText = "两次输入的密码不一致！";
+        return;
+    }
+
+    msgEl.className = "text-xs text-center font-medium block text-indigo-600";
+    msgEl.innerText = "正在发送 6 位数验证码至邮箱...";
+
+    pendingEmail = email;
+    pendingUsername = username;
+    pendingPassword = password;
+
+    const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { username: username } }
+    });
+
+    if (error) {
+        msgEl.className = "text-xs text-center font-medium block text-rose-500";
+        msgEl.innerText = error.message;
+    } else {
+        document.getElementById('otp-target-email').innerText = email;
+        showAuthStep('otp');
+    }
+}
+
+// --- Auth Step 2: 校验 6 位数 OTP 验证码 ---
+async function handleOTPSubmit(e) {
+    e.preventDefault();
+    const code = document.getElementById('otp-code-input').value.trim();
+    const msgEl = document.getElementById('otp-msg');
+
+    if (code.length !== 6) {
+        msgEl.className = "text-xs text-center font-medium block text-rose-500";
+        msgEl.innerText = "请输入完整的 6 位数字验证码";
+        return;
+    }
+
+    msgEl.className = "text-xs text-center font-medium block text-indigo-600";
+    msgEl.innerText = "正在验证 6 位数验证码...";
+
+    const { data, error } = await supabase.auth.verifyOtp({
+        email: pendingEmail,
+        token: code,
+        type: 'signup'
+    });
+
+    if (error) {
+        msgEl.className = "text-xs text-center font-medium block text-rose-500";
+        msgEl.innerText = "验证码错误或已失效：" + error.message;
+    } else {
+        msgEl.className = "text-xs text-center font-medium block text-emerald-600";
+        msgEl.innerText = "验证成功！开始完成个人引导...";
+
+        // 自动帮用户登录
+        await supabase.auth.signInWithPassword({ email: pendingEmail, password: pendingPassword });
+    }
+}
+
+async function handleResendOTP() {
+    if (!pendingEmail) return;
+    alert("验证码已重新发送，请检查收件箱或垃圾邮件箱！");
+    await supabase.auth.resend({ type: 'signup', email: pendingEmail });
+}
+
+// --- Step 3: Onboarding 身体指标引导提交 ---
+async function handleOnboardingSubmit(e) {
+    e.preventDefault();
+    if (!currentUser) return;
+
+    const genderRadio = document.querySelector('input[name="onboarding_gender"]:checked');
+    const gender = genderRadio ? genderRadio.value : 'male';
+
+    const age = parseInt(document.getElementById('onboard-age').value) || 23;
+    const height = parseFloat(document.getElementById('onboard-height').value) || 175;
+    const weight = parseFloat(document.getElementById('onboard-weight').value) || 74;
+
+    const planRadio = document.querySelector('input[name="onboarding_plan"]:checked');
+    const diet_plan = planRadio ? planRadio.value : 'carb_cycling';
+
+    userProfile = {
+        user_id: currentUser.id,
+        username: pendingUsername || currentUser.email.split('@')[0],
+        gender, age, height, weight, diet_plan,
+        cycle_start_date: getTodayStrUTC8(),
+        onboarding_completed: true
+    };
+
+    await dbSaveProfile(currentUser.id, userProfile);
+
+    toggleModal('onboarding-modal', false);
+    recalculateAndRender();
+}
+
+// --- 校验用户是否已完成 Onboarding ---
+async function checkOnboardingAndLoadData() {
+    if (!currentUser) return;
+
+    const { foods, favIds: fetchedFavs } = await dbFetchFoodsAndFavorites(currentUser.id);
+    dbFoods = foods;
+    favIds = fetchedFavs;
+
+    const { profile, entries } = await dbLoadProfileAndLogs(currentUser.id, currentViewDate);
+
+    if (profile) {
+        userProfile = profile;
+    }
+
+    foodEntries = entries;
+
+    if (!profile || !profile.onboarding_completed) {
+        // 未完成 Onboarding，弹出全屏身体数据引导 Modal
+        toggleModal('onboarding-modal', true);
+    } else {
+        toggleModal('onboarding-modal', false);
+        recalculateAndRender();
+    }
+}
+
+// --- 界面重构与日历计算逻辑保留 ---
 function getWeekdayName(dateStr, lang) {
     const zhDays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
     const enDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -212,60 +390,6 @@ function switchFoodTab(tab) {
     renderPresetFoodList();
 }
 
-function toggleAuthMode() {
-    isRegisterMode = !isRegisterMode;
-    const t = i18n[currentLang];
-    document.getElementById('auth-modal-title').innerText = isRegisterMode ? t.auth_register_title : t.auth_login_title;
-    document.getElementById('auth-submit-btn').innerText = isRegisterMode ? t.btn_go_register : t.btn_login;
-    document.getElementById('btn-toggle-auth').innerText = isRegisterMode ? t.btn_login : t.btn_go_register;
-    document.getElementById('auth-switch-prompt').innerText = isRegisterMode ? t.auth_prompt_has_account : t.auth_prompt_no_account;
-}
-
-async function handleAuthSubmit(e) {
-    e.preventDefault();
-    const email = document.getElementById('auth-email').value.trim();
-    const password = document.getElementById('auth-password').value;
-    const msgEl = document.getElementById('auth-msg');
-
-    msgEl.className = "text-xs text-center font-medium block text-indigo-600";
-    msgEl.innerText = "Processing...";
-
-    if (isRegisterMode) {
-        const { error } = await supabase.auth.signUp({ email, password });
-        if (error) {
-            msgEl.className = "text-xs text-center font-medium block text-rose-500";
-            msgEl.innerText = error.message;
-        } else {
-            msgEl.className = "text-xs text-center font-medium block text-emerald-600";
-            msgEl.innerText = "Verification email sent.";
-        }
-    } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) {
-            msgEl.className = "text-xs text-center font-medium block text-rose-500";
-            msgEl.innerText = error.message;
-        }
-    }
-}
-
-async function loadProfileAndLogs() {
-    if (!currentUser) return;
-
-    const { foods, favIds: fetchedFavs } = await dbFetchFoodsAndFavorites(currentUser.id);
-    dbFoods = foods;
-    favIds = fetchedFavs;
-
-    const { profile, entries } = await dbLoadProfileAndLogs(currentUser.id, currentViewDate);
-    if (profile) userProfile = profile;
-    foodEntries = entries;
-
-    if (fpStartDateInstance && userProfile.cycle_start_date) {
-        fpStartDateInstance.setDate(userProfile.cycle_start_date);
-    }
-
-    recalculateAndRender();
-}
-
 async function handleProfileSubmit(e) {
     e.preventDefault();
     if (!currentUser) return;
@@ -278,7 +402,7 @@ async function handleProfileSubmit(e) {
     const selectedRadio = document.querySelector('input[name="diet_plan"]:checked');
     const plan = selectedRadio ? selectedRadio.value : 'carb_cycling';
 
-    userProfile = { weight, height, age, cycle_start_date: startDate, diet_plan: plan };
+    userProfile = { ...userProfile, weight, height, age, cycle_start_date: startDate, diet_plan: plan };
     await dbSaveProfile(currentUser.id, userProfile);
 
     closeProfileModal();
@@ -766,40 +890,16 @@ function closeProfileModal() {
     toggleModal('profile-modal', false);
 }
 
-// 统一更新 DOM 中所有带有 data-i18n 的元素的语言文本
-function applyLanguage() {
-    const t = i18n[currentLang];
-
-    // 更新所有 data-i18n 文本
-    document.querySelectorAll('[data-i18n]').forEach(el => {
-        const key = el.getAttribute('data-i18n');
-        if (t[key]) {
-            el.innerText = t[key];
-        }
-    });
-
-    // 更新 input 的 placeholder 文本
-    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
-        const key = el.getAttribute('data-i18n-placeholder');
-        if (t[key]) {
-            el.placeholder = t[key];
-        }
-    });
-
-    // 更新 Flatpickr 日历组件语言
-    if (fpViewDateInstance) {
-        fpViewDateInstance.set('locale', currentLang === 'zh' ? 'zh' : 'default');
-    }
-    if (fpStartDateInstance) {
-        fpStartDateInstance.set('locale', currentLang === 'zh' ? 'zh' : 'default');
-    }
-
-    // 重新刷新视图
-    recalculateAndRender();
-}
-
 function toggleLanguage() {
     currentLang = currentLang === 'zh' ? 'en' : 'zh';
     document.getElementById('lang-text').innerText = currentLang === 'zh' ? 'EN' : 'CN';
-    applyLanguage();
+
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (i18n[currentLang][key]) {
+            el.innerText = i18n[currentLang][key];
+        }
+    });
+
+    recalculateAndRender();
 }

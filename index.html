@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>瓜皮智营养云端日志 | Guapi NutriCloud App</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/src/favicon.png">
+  
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
@@ -44,48 +47,209 @@
   </div>
 </header>
 
-<!-- Login/Register Modal -->
+<!-- Auth Auth Flow Modal (多步骤弹窗：登录 / 注册 / 6位验证码) -->
 <div id="auth-modal" class="modal-overlay z-50">
-  <div class="modal-content max-w-md">
-    <div class="text-center mb-6">
-      <div class="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-2 text-xl font-bold">
-        <i class="fa-solid fa-cloud-arrow-up"></i>
+  <div class="modal-content max-w-md w-full">
+
+    <!-- Step 1A: 账号登录表单 -->
+    <div id="auth-step-login" class="space-y-4">
+      <div class="text-center mb-4">
+        <div class="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-2 text-xl font-bold">
+          <i class="fa-solid fa-right-to-bracket"></i>
+        </div>
+        <h2 class="text-lg font-bold text-slate-800" data-i18n="auth_login_title">登录你的健身云端账号</h2>
+        <p class="text-xs text-slate-500 mt-1">云端同步数据，智能开启碳水循环</p>
       </div>
-      <h2 class="text-lg font-bold text-slate-800" id="auth-modal-title" data-i18n="auth_login_title">登录你的健身云端账号</h2>
-      <p class="text-xs text-slate-500 mt-1">云端保存每日数据，智能匹配体质饮食策略</p>
+
+      <form id="form-login" class="space-y-3.5">
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">电子邮箱 Email</label>
+          <input type="email" id="login-email" required placeholder="your@email.com" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">密码 Password</label>
+          <input type="password" id="login-password" required placeholder="******" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+        </div>
+
+        <div id="login-msg" class="text-xs text-center font-medium hidden"></div>
+
+        <button type="submit" class="w-full btn-primary py-2.5 rounded-xl font-bold text-xs shadow-md" data-i18n="btn_login">
+          登录 / Login
+        </button>
+      </form>
+
+      <div class="mt-3 text-center text-xs text-slate-500 border-t pt-3">
+        <span data-i18n="auth_prompt_no_account">还没有账号？</span>
+        <button type="button" id="btn-goto-register" class="text-indigo-600 font-bold hover:underline ml-1" data-i18n="btn_go_register">去注册新账号</button>
+      </div>
     </div>
 
-    <form id="auth-form" class="space-y-4">
-      <div>
-        <label class="block text-xs font-semibold text-slate-600 mb-1">电子邮箱 Email</label>
-        <input type="email" id="auth-email" required placeholder="your@email.com" class="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 outline-none">
+    <!-- Step 1B: 注册新账号表单 (Username + Email + Password + Confirm) -->
+    <div id="auth-step-register" class="hidden space-y-4">
+      <div class="text-center mb-4">
+        <div class="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-2 text-xl font-bold">
+          <i class="fa-solid fa-user-plus"></i>
+        </div>
+        <h2 class="text-lg font-bold text-slate-800" data-i18n="auth_register_title">创建新账号</h2>
+        <p class="text-xs text-slate-500 mt-1">注册即刻体验智能碳水循环算法</p>
       </div>
-      <div>
-        <label class="block text-xs font-semibold text-slate-600 mb-1">密码 Password</label>
-        <input type="password" id="auth-password" required minlength="6" placeholder="******" class="w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 outline-none">
+
+      <form id="form-register" class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">昵称 / Username</label>
+          <input type="text" id="reg-username" required placeholder="例如：瓜皮健身达人" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">电子邮箱 Email</label>
+          <input type="email" id="reg-email" required placeholder="your@email.com" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">密码 Password (至少 6 位)</label>
+          <input type="password" id="reg-password" required minlength="6" placeholder="******" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">确认密码 Confirm Password</label>
+          <input type="password" id="reg-password-confirm" required minlength="6" placeholder="******" class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none">
+        </div>
+
+        <div id="reg-msg" class="text-xs text-center font-medium hidden"></div>
+
+        <button type="submit" class="w-full btn-primary py-2.5 rounded-xl font-bold text-xs shadow-md">
+          下一步：发送 6 位验证码
+        </button>
+      </form>
+
+      <div class="mt-3 text-center text-xs text-slate-500 border-t pt-3">
+        <span data-i18n="auth_prompt_has_account">已有账号？</span>
+        <button type="button" id="btn-goto-login" class="text-indigo-600 font-bold hover:underline ml-1">直接登录</button>
       </div>
-
-      <div id="auth-msg" class="text-xs text-center font-medium hidden"></div>
-
-      <button type="submit" id="auth-submit-btn" class="w-full btn-primary" data-i18n="btn_login">
-        登录 / Login
-      </button>
-    </form>
-
-    <div class="mt-4 text-center text-xs text-slate-500">
-      <span id="auth-switch-prompt" data-i18n="auth_prompt_no_account">还没有账号？</span>
-      <button type="button" id="btn-toggle-auth" class="text-indigo-600 font-bold hover:underline ml-1" data-i18n="btn_go_register">去注册新账号</button>
     </div>
+
+    <!-- Step 2: 6 位数 Email 验证码输入框 -->
+    <div id="auth-step-otp" class="hidden space-y-4">
+      <div class="text-center mb-4">
+        <div class="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-2 text-xl font-bold">
+          <i class="fa-solid fa-envelope-circle-check"></i>
+        </div>
+        <h2 class="text-lg font-bold text-slate-800">输入 6 位邮箱验证码</h2>
+        <p class="text-xs text-slate-500 mt-1">验证码已发送至：<span id="otp-target-email" class="font-bold text-indigo-600">user@email.com</span></p>
+      </div>
+
+      <form id="form-otp" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-2 text-center">验证码 (Verification Code)</label>
+          <input type="text" id="otp-code-input" maxlength="6" placeholder="000000" pattern="[0-9]*" class="w-full text-center text-2xl font-black tracking-[0.5em] text-indigo-600 border-2 border-indigo-500 rounded-xl py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+        </div>
+
+        <div id="otp-msg" class="text-xs text-center font-medium hidden"></div>
+
+        <button type="submit" class="w-full btn-primary py-2.5 rounded-xl font-bold text-xs shadow-md">
+          验证并开始完成个人引导
+        </button>
+      </form>
+
+      <div class="flex justify-between items-center text-xs pt-2">
+        <button type="button" id="btn-resend-otp" class="text-indigo-600 font-bold hover:underline">重新发送验证码</button>
+        <button type="button" id="btn-back-to-reg" class="text-slate-400 hover:text-slate-600">返回修改邮箱</button>
+      </div>
+    </div>
+
   </div>
 </div>
 
-<!-- User Profile Modal -->
+<!-- Step 3: 首次注册身体数据全屏引导弹窗 (Onboarding Profile Setup Modal) -->
+<div id="onboarding-modal" class="modal-overlay hidden z-50">
+  <div class="modal-content max-w-md w-full mx-auto">
+    <div class="text-center mb-4">
+      <div class="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-2 text-xl font-bold">
+        <i class="fa-solid fa-wand-magic-sparkles"></i>
+      </div>
+      <h3 class="text-lg font-bold text-slate-800">定制你的专属健身计划</h3>
+      <p class="text-xs text-slate-500 mt-1">请输入你的基本指标，算法将自动计算 BMI 与碳水目标</p>
+    </div>
+
+    <form id="onboarding-form" class="space-y-4">
+      <!-- 性别选择 -->
+      <div>
+        <label class="block text-xs font-bold text-slate-700 mb-1.5">生理性别</label>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="border-2 border-indigo-500 bg-indigo-50/50 p-2.5 rounded-xl flex items-center justify-center gap-2 cursor-pointer font-bold text-indigo-900 text-xs">
+            <input type="radio" name="onboarding_gender" value="male" checked class="hidden">
+            <span>👨 男士 (Male)</span>
+          </label>
+          <label class="border-2 border-slate-200 bg-slate-50 p-2.5 rounded-xl flex items-center justify-center gap-2 cursor-pointer font-bold text-slate-700 text-xs">
+            <input type="radio" name="onboarding_gender" value="female" class="hidden">
+            <span>👩 女士 (Female)</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- 年龄、身高、体重 -->
+      <div class="grid grid-cols-3 gap-2">
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-600 mb-1">年龄</label>
+          <input type="number" id="onboard-age" value="23" min="10" max="100" class="w-full bg-slate-50 border rounded-lg px-2.5 py-2 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none">
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-600 mb-1">身高 (cm)</label>
+          <input type="number" id="onboard-height" value="175" min="100" max="230" class="w-full bg-slate-50 border rounded-lg px-2.5 py-2 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none">
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-600 mb-1">体重 (kg)</label>
+          <input type="number" id="onboard-weight" value="74" step="0.5" min="30" max="200" class="w-full bg-slate-50 border rounded-lg px-2.5 py-2 text-sm font-bold text-indigo-600 focus:ring-2 focus:ring-indigo-500 outline-none">
+        </div>
+      </div>
+
+      <!-- BMI 动态计算预览 -->
+      <div class="bg-amber-50 border border-amber-200 p-2.5 rounded-xl text-xs text-amber-800 font-medium">
+        <div class="flex justify-between items-center mb-1">
+          <span class="font-bold">BMI: <span id="onboard-bmi-val">24.2</span></span>
+          <span id="onboard-bmi-badge" class="bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full text-[10px] font-bold">标准</span>
+        </div>
+        <p class="text-[11px] leading-tight">💡 智能计算完成！已自动为你配置【3低1高碳水循环】策略。</p>
+      </div>
+
+      <!-- 核心健身目标 -->
+      <div>
+        <label class="block text-xs font-bold text-slate-700 mb-1.5">核心健身目标</label>
+        <div class="grid grid-cols-3 gap-2 text-xs">
+          <label class="border-2 border-indigo-500 bg-indigo-50/50 p-2 rounded-xl cursor-pointer flex flex-col justify-between">
+            <input type="radio" name="onboarding_plan" value="carb_cycling" checked class="hidden">
+            <span class="font-bold text-indigo-900">减脂塑形</span>
+            <span class="text-[10px] text-slate-500 mt-1">碳水循环</span>
+          </label>
+
+          <label class="border-2 border-slate-200 bg-slate-50 p-2 rounded-xl cursor-pointer flex flex-col justify-between">
+            <input type="radio" name="onboarding_plan" value="balanced" class="hidden">
+            <span class="font-bold text-slate-700">日常维持</span>
+            <span class="text-[10px] text-slate-500 mt-1">通用均衡</span>
+          </label>
+
+          <label class="border-2 border-slate-200 bg-slate-50 p-2 rounded-xl cursor-pointer flex flex-col justify-between">
+            <input type="radio" name="onboarding_plan" value="ectomorph" class="hidden">
+            <span class="font-bold text-slate-700">增肌偏瘦</span>
+            <span class="text-[10px] text-slate-500 mt-1">外胚高碳</span>
+          </label>
+        </div>
+      </div>
+
+      <button type="submit" class="w-full btn-primary py-3 rounded-xl font-bold text-xs shadow-md mt-2">
+        开启健身之旅 (进入主页)
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- User Profile Edit Modal (后期的编辑设置弹窗) -->
 <div id="profile-modal" class="modal-overlay hidden z-50">
   <div class="modal-content max-w-md w-full mx-auto">
     <div class="flex justify-between items-center mb-4 border-b pb-3">
       <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
         <i class="fa-solid fa-user-gear text-indigo-600"></i>
-        <span data-i18n="profile_title">个人设置与智能体质分析</span>
+        <span>个人设置与智能体质分析</span>
       </h3>
       <button id="btn-close-profile" class="text-slate-400 hover:text-slate-600 text-lg p-1">
         <i class="fa-solid fa-xmark"></i>
@@ -140,7 +304,6 @@
         </div>
       </div>
 
-      <!-- 起算日期设置卡片 -->
       <div id="start-date-section" class="bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-100 max-w-full overflow-hidden">
         <div class="flex justify-between items-center mb-1.5 gap-1">
           <label class="block text-[11px] font-bold text-indigo-900 truncate" data-i18n="start_date_label">第一天(低碳日)起始日期：</label>
@@ -168,10 +331,8 @@
 <!-- Main App -->
 <main class="max-w-4xl mx-auto px-3.5 mt-4 space-y-4">
 
-  <!-- 循环状态 Banner & 历史日期导航工具栏 -->
   <section id="cycle-banner" class="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl shadow-md p-3.5 text-white relative overflow-hidden transition-all">
     <div class="relative z-10 space-y-2">
-
       <div class="flex items-center justify-between bg-black/25 backdrop-blur-md rounded-xl px-2 py-1 text-xs border border-white/10">
         <button id="btn-prev-day" class="hover:bg-white/20 text-white font-bold px-2.5 py-1 rounded-lg transition flex items-center gap-1 shrink-0">
           <i class="fa-solid fa-chevron-left text-[10px]"></i>
@@ -213,7 +374,6 @@
           <span data-i18n="edit_mode_btn">修改参数/模式</span>
         </button>
       </div>
-
     </div>
   </section>
 
